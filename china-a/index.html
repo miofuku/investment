@@ -104,7 +104,14 @@ td.num{text-align:right}
 .bucket-body td{padding:7px 12px}
 
 /* ── REPORTS ── */
-.report-grid{display:grid;grid-template-columns:300px 1fr;gap:0;height:calc(100vh - 120px);border:1px solid var(--border);border-radius:8px;overflow:hidden}
+.request-bar{display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap;background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:12px 16px}
+.request-label{font-size:13px;font-weight:600;color:var(--text)}
+.request-bar input{background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:7px 12px;border-radius:4px;font-size:13px;font-family:var(--sans);outline:none}
+.request-bar input:focus{border-color:var(--accent)}
+#req-code{width:150px;font-family:var(--mono)}
+#req-note{width:220px}
+.request-msg{font-size:12px;color:var(--muted);font-family:var(--mono)}
+.report-grid{display:grid;grid-template-columns:300px 1fr;gap:0;height:calc(100vh - 178px);border:1px solid var(--border);border-radius:8px;overflow:hidden}
 .report-list{border-right:1px solid var(--border);overflow-y:auto;background:var(--bg2)}
 .report-item{padding:14px 16px;border-bottom:1px solid var(--border);cursor:pointer;transition:background .1s}
 .report-item:hover{background:var(--bg3)}
@@ -220,6 +227,13 @@ td.num{text-align:right}
 
 <!-- ══ 简报 ══ -->
 <div class="page" id="page-reports">
+  <div class="request-bar">
+    <span class="request-label">想看哪只票?</span>
+    <input type="text" id="req-code" placeholder="6位代码,如 600036" maxlength="6">
+    <input type="text" id="req-note" placeholder="备注 / 谁申请的(可选)">
+    <button class="btn" onclick="submitRequest()">提交申请</button>
+    <span id="req-msg" class="request-msg"></span>
+  </div>
   <div class="report-grid" id="report-grid">
     <div class="report-list" id="report-list">
       <div class="loading"><span class="loading-dot"></span><span class="loading-dot"></span><span class="loading-dot"></span></div>
@@ -247,6 +261,10 @@ let ML_SORTED = { col:'score', asc:true };
 let ML_PAGE = 1;
 const ML_PAGE_SIZE = 50;
 let scatterData = [];
+
+// 看票申请提交地址:在 china-a/.env 写 REQUEST_ENDPOINT=...,由 push_to_sheets.py 生成时注入 data.js。
+// (它不是密钥:浏览器端 fetch 必然可见;放 .env 只是集中配置、不写死在 index.html。)留空则提交框给出未配置提示。
+const REQUEST_ENDPOINT = (window.SHEET_DATA && window.SHEET_DATA.request_endpoint) || "";
 
 // ══ CSV 加载(已废弃,数据来自 data.js)══
 // 保留空函数避免引用报错
@@ -674,6 +692,37 @@ function openReport(code) {
        <div style="margin-top:8px;font-size:12px;color:var(--muted);font-family:var(--mono)">python push_to_sheets.py --report ${code}</div>
        </div>`;
   }
+}
+
+// 提交看票申请 → Google Apps Script → requests 表(本地 --process-requests 处理)
+function submitRequest() {
+  const codeEl = document.getElementById('req-code');
+  const noteEl = document.getElementById('req-note');
+  const msg = document.getElementById('req-msg');
+  const setMsg = (color, text) => { msg.style.color = color; msg.textContent = text; };
+
+  const code = (codeEl.value || '').replace(/\D/g, '').slice(0, 6);
+  if (code.length !== 6) { setMsg('#c0392b', '请输入6位股票代码'); return; }
+
+  // 已有简报则直接打开,不重复申请
+  if (DATA.reports.find(r => String(r.code).padStart(6,'0') === code)) {
+    setMsg('var(--muted)', '该票已有简报,正在打开…');
+    openReport(code);
+    return;
+  }
+  if (!REQUEST_ENDPOINT) { setMsg('#c0392b', '未配置提交地址(REQUEST_ENDPOINT)'); return; }
+
+  const stock = lookupStock(code);
+  const label = stock ? `(${stock.name})` : '';
+  const params = new URLSearchParams({ code, note: noteEl.value || '' });
+  setMsg('var(--muted)', '提交中…');
+  // no-cors:Apps Script 跨域不回 CORS 头,采用乐观提交(服务端已去重+校验)
+  fetch(REQUEST_ENDPOINT + '?' + params.toString(), { mode: 'no-cors' })
+    .then(() => {
+      setMsg('#00805c', `✓ 已提交 ${code}${label},生成后会出现在列表里`);
+      codeEl.value = ''; noteEl.value = '';
+    })
+    .catch(() => setMsg('#c0392b', '提交失败,请稍后重试'));
 }
 
 // ══════════════════════════════════════════

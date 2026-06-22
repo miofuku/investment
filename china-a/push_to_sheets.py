@@ -37,6 +37,28 @@ import pandas as pd
 import gspread
 from gspread.exceptions import WorksheetNotFound
 
+
+def _load_dotenv():
+    """读取本脚本同目录 .env(KEY=VALUE)。已存在的环境变量优先,不覆盖。零依赖。"""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    if not os.path.exists(path):
+        return
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            if line.startswith("export "):
+                line = line[len("export "):]
+            key, _, val = line.partition("=")
+            key, val = key.strip(), val.strip().strip('"').strip("'")
+            if key:
+                os.environ.setdefault(key, val)
+
+
+_load_dotenv()
+
+
 def _clean_val(v):
     """NaN/inf/None 统一转空字符串，避免 JSON 序列化报错。"""
     if v is None: return ""
@@ -55,6 +77,7 @@ SH = {
     "traditional": "traditional",
     "reports":     "reports",
     "financials":  "financials",
+    "requests":    "requests",
 }
 
 TODAY = dt.date.today().strftime("%Y-%m-%d")
@@ -301,6 +324,7 @@ def generate_data_js(ml, tr, fi, reports=None, out_path="data.js"):
     rp = reports or []
     payload = {
         "generated": TODAY,
+        "request_endpoint": os.environ.get("REQUEST_ENDPOINT", ""),   # 来自 .env,前端看票申请用
         "masterlist":  clean(ml),
         "traditional": clean(tr),
         "financials":  clean(fi),
@@ -339,7 +363,8 @@ def push_all(dryrun=False, top_n=None):
 
     print("\n[生成 data.js]")
     if not dryrun:
-        generate_data_js(ml, tr, fi)
+        rp = _read_reports_from_sheets()   # 保留已有简报,避免 --all 把 reports 清空
+        generate_data_js(ml, tr, fi, rp)
 
     print("\n完成。把 data.js 和 index.html 一起部署到 Cloudflare Pages。")
 
@@ -403,23 +428,92 @@ def push_report(code, dryrun=False):
         _rebuild_data_js()
 
 
+def _read_reports_from_sheets():
+    """从 reports Sheet 读已有简报(需联网)。失败则返回空列表,不阻断 data.js 生成。"""
+    try:
+        ss = _connect()
+        ws = ss.worksheet(SH["reports"])
+        rp = ws.get_all_records()
+        print(f"  读取已有简报 {len(rp)} 条")
+        return rp
+    except Exception as e:
+        print(f"  [跳过简报] 读取 Sheets 失败: {e}")
+        return []
+
+
 def _rebuild_data_js():
     """从本地 CSV 重建 data.js(含已有简报从 Sheets 读)。"""
     ml = prepare_masterlist()
     tr = prepare_traditional()
     fi = prepare_financials()
-    # 简报从 reports Sheet 读(需联网)——若失败则跳过简报部分
-    rp = []
-    try:
-        import gspread
-        gc = gspread.service_account(filename=SA_PATH)
-        ss = gc.open(SPREADSHEET_NAME)
-        ws = ss.worksheet(SH["reports"])
-        rp = ws.get_all_records()
-        print(f"  读取已有简报 {len(rp)} 条")
-    except Exception as e:
-        print(f"  [跳过简报] 读取 Sheets 失败: {e}")
+    rp = _read_reports_from_sheets()
     generate_data_js(ml, tr, fi, rp)
+
+
+# ================================================================
+# 看票申请:读取 requests 表的 pending 行 → 逐只生成简报 → 标记 done
+# ================================================================
+def _masterlist_codes():
+    """母清单里的合法代码集合,用于校验申请(避免乱填/退市票白跑一次 GLM)。"""
+    path = "factor_all_market_magic.csv"
+    if not os.path.exists(path):
+        return set()
+    df = pd.read_csv(path, dtype={"code": str})
+    return set(df["code"].astype(str).str.zfill(6))
+
+
+def process_requests(dryrun=False):
+    """处理用户经前端(Apps Script)提交、落在 requests 表里的看票申请。
+    流程:取 status=pending 的行 → 6位+母清单校验 → push_report 生成入库 →
+    把该行 status 改为 done/invalid/not_in_universe。需联网。"""
+    print(f"=== process_requests {'[DRYRUN]' if dryrun else ''} ===")
+    ss = _connect()
+    try:
+        ws = ss.worksheet(SH["requests"])
+    except WorksheetNotFound:
+        print("  无 requests 工作表,跳过(还没有人提交申请)")
+        return []
+
+    records = ws.get_all_records()
+    if not records:
+        print("  requests 表为空")
+        return []
+    header = ws.row_values(1)
+    try:
+        status_col = header.index("status") + 1     # update_cell 用的列号(1基)
+    except ValueError:
+        print("  requests 表缺 status 列,跳过")
+        return []
+
+    # 行号:表头占第1行,数据从第2行起
+    pending = [(i + 2, r) for i, r in enumerate(records)
+               if str(r.get("status", "")).strip().lower() == "pending"]
+    if not pending:
+        print("  没有待处理(pending)的申请")
+        return []
+
+    valid = _masterlist_codes()
+    print(f"  待处理 {len(pending)} 条")
+    done = []
+    for rownum, r in pending:
+        code = str(r.get("code", "")).strip().zfill(6)
+        if not re.fullmatch(r"\d{6}", code):
+            print(f"  [行{rownum}] 非法 code『{r.get('code')}』→ invalid")
+            if not dryrun:
+                ws.update_cell(rownum, status_col, "invalid")
+            continue
+        if valid and code not in valid:
+            print(f"  [{code}] 不在母清单 → not_in_universe")
+            if not dryrun:
+                ws.update_cell(rownum, status_col, "not_in_universe")
+            continue
+        print(f"  → 生成简报 {code} ...")
+        if not dryrun:
+            push_report(code, dryrun=False)             # 写 reports 表 + 重建 data.js
+            ws.update_cell(rownum, status_col, "done")
+        done.append(code)
+    print(f"  完成 {len(done)} 条:{done or '无'}")
+    return done
 
 
 # ================================================================
@@ -437,6 +531,7 @@ if __name__ == "__main__":
         print("  python push_to_sheets.py --report 600519    生成+入库简报+更新data.js")
         print("  python push_to_sheets.py --report 600519 601006 600938  批量简报")
         print("  python push_to_sheets.py --datajs           仅重新生成data.js")
+        print("  python push_to_sheets.py --process-requests 处理用户提交的看票申请(requests表)")
         print("  任何命令加 --dryrun 只打印不写入")
         sys.exit(0)
 
@@ -454,6 +549,9 @@ if __name__ == "__main__":
             push_report(c, dryrun=dryrun)
             if len(codes) > 1:
                 time.sleep(2)
+
+    elif "--process-requests" in args:
+        process_requests(dryrun=dryrun)
 
     elif "--datajs" in args:
         print("=== 重新生成 data.js ===")

@@ -11,9 +11,10 @@
 
 ## 0. 环境与前置
 
-- 依赖:`pip install openai akshare pandas`
-- 环境变量:`export ZAI_API_KEY=...`(GLM,OpenAI 兼容接口)
+- 依赖:`pip install openai akshare pandas`;发布到 Sheets/网页另需 `pip install gspread`
+- 密钥:在 `china-a/.env` 写 `ZAI_API_KEY=你的key`(脚本启动自动加载,无需手动 `export`;已 export 的同名变量优先)。`.env` 已被 `.gitignore` 忽略。
 - 模型:`glm-5.1`,temperature 0.1
+- 发布/分享相关前置见 §4。
 - **网络说明:东方财富(eastmoney)接口在本机不稳(ConnectionReset);可用源为新浪/巨潮/同花顺/交易所直连。** 大宗交易工具走东财,可能间歇失败(已做诚实降级,失败不编造)。
 
 ---
@@ -38,7 +39,7 @@
 
 | 文件 | 作用 |
 |---|---|
-| `a_share_universe_v3.py` | 洗池子:全A股→剔ST/次新/银行,产 `universe_normal.csv` / `universe_financials.csv` |
+| `a_share_universe.py` | 洗池子:全A股→剔ST/次新/银行,产 `universe_normal.csv` / `universe_financials.csv` |
 | `step4b_market_factors.py` | **数据函数库**,被 step4c 和所有 agent import(删了全盘崩) |
 | `step4c_magic_formula.py` | 全市场行业内神奇公式打分,产母清单;含金融股隔离 |
 | `check_masterlist.py` | 母清单体检:抽出榜首/带红旗/超低PB等可疑票供人工核 |
@@ -85,6 +86,17 @@
 > **删除前先确认** `python step4c_magic_formula.py` 与 `python agent_step8_block_trade.py 600519` 都能跑通。
 > 建议把"可删"挪进 `archive/` 而非硬删,确认一周无碍再清。
 
+### 2.6 发布层(Web 前端 + 部署,见 §4)
+
+| 文件 | 作用 |
+|---|---|
+| `push_to_sheets.py` | 本地产出 → 写 Google Sheets + 生成 `data.js`;`--all` 刷清单、`--report` 单只入库、`--process-requests` 处理看票申请、`--datajs` 仅重建数据包 |
+| `index.html` | 纯静态前端(母清单 / 估值散点 / 传统候选 / 深挖简报 + 看票申请框),只读 `data.js` |
+| `data.js` | 自动生成的数据包(`window.SHEET_DATA`),与 `index.html` 一起部署;**勿手改** |
+| `build_and_deploy.sh` | 一键:生成数据 → 只把 `index.html`+`data.js` 部署到 Cloudflare Pages |
+| `apps_script_requests.gs` | Google Apps Script(贴进 Sheet 的 Apps Script 部署):接收看票申请,写入 `requests` 表 |
+| `service_account.json` | gspread 服务账号凭证(本地,**已 gitignore,绝不上传**) |
+
 ---
 
 ## 3. 常用命令
@@ -114,7 +126,58 @@ python agent_step8_block_trade.py 601006    # 换成任意6位代码
 
 ---
 
-## 4. 十三个工具(agent 深挖时调用)
+## 4. 发布与分享(Web 前端 + Cloudflare)
+
+研究产出通过一个**纯静态网页**分享给少数熟人:无后端、无数据库、无 API。Agent 永远只在本地跑。
+
+### 4.1 数据怎么流到网页
+```
+本地 CSV / 简报 ──push_to_sheets.py──┬─→ Google Sheets(免费、可视的数据备份)
+                                     └─→ data.js(window.SHEET_DATA = {…})
+                                                │  index.html 直接读(无 fetch / 无 CORS)
+                                                │
+                              build_and_deploy.sh ─→ Cloudflare Pages(CDN)
+                                                │
+                              Cloudflare Access ─→ 仅白名单邮箱可访问
+```
+- `data.js` 把母清单 / 候选 / 金融股 / 简报全序列化进 `window.SHEET_DATA`,网页同步引入,彻底绕开 CORS。
+- 部署**只上传 `index.html` + `data.js`**(经临时目录暂存),绝不上传 `.env` / `service_account.json` / CSV——否则密钥会变成可公开下载的文件。
+
+### 4.2 一次性前置
+1. **Google Sheets**:`pip install gspread`;在 Drive 新建表格,名字与 `push_to_sheets.py` 的 `SPREADSHEET_NAME`(默认「A股价值投资系统」)一致;把 `service_account.json` 里的服务账号邮箱加为该表格的「编辑者」。
+2. **Cloudflare**:`npx wrangler login`(一次);把 `build_and_deploy.sh` 顶部 `PROJECT_NAME` 改成你的 Pages 项目名(或设 `CF_PAGES_PROJECT`)。项目不存在时先 `npx wrangler pages project create <名字>`。
+3. **看票申请**:把 `apps_script_requests.gs` 贴进 Sheet 的 Apps Script 并部署为 Web App,把得到的 URL 写进 `china-a/.env` 的 `REQUEST_ENDPOINT=...`(`push_to_sheets.py` 会在生成 `data.js` 时注入;它不是密钥,但放 .env 便于集中管理、不写死在 `index.html`)。
+4. **访问控制**:配 Cloudflare Access(见 §4.5)。
+
+### 4.3 部署命令
+```bash
+./build_and_deploy.sh --all              # 刷母清单+候选+金融股 → 写 Sheets + data.js → 部署
+./build_and_deploy.sh --report 600519    # 单只简报入库 → 更新 data.js → 部署(可跟多个代码)
+./build_and_deploy.sh --process-requests # 处理用户提交的看票申请(§4.4)→ 部署
+./build_and_deploy.sh --all --no-deploy  # 只本地生成,不部署(本地打开 index.html 预览)
+```
+> ⚠️ `--all` 只读现成 CSV,**不重算因子**。要刷新底层数字,先按 §3「刷新母清单」跑 `step4c` 等,再 `--all`。
+
+### 4.4 让用户申请看某只票
+- 「深挖简报」页有「想看哪只票?」输入框 → 提交到 Apps Script(`apps_script_requests.gs`)→ 追加到 Sheet 的 `requests` 表(服务端做 6 位校验 + pending 去重)。
+- 你定期跑 `./build_and_deploy.sh --process-requests`:取 `pending` 行 → 校验在母清单内 → 跑 agent 生成简报 → 写 `reports` 表 + 重建 `data.js` → 把该行标记 `done`/`invalid`/`not_in_universe` → 部署。
+- 已有简报的代码,前端直接打开,不重复申请。
+
+### 4.5 限制访问(只给认识的几个人)
+Pages 站点默认公开。用 **Cloudflare Access**(Zero Trust,免费 ≤50 人)按邮箱白名单放行:
+1. Cloudflare → **Zero Trust → Access → Applications → Add → Self-hosted**。
+2. 域名填 `<项目>.pages.dev`;策略 **Allow**,Include → **Emails** 列出受邀邮箱(或 Emails ending in 某域名)。
+3. 登录方式用默认 **One-time PIN**(邮箱收 6 位码),无需配置 IdP。
+未在名单上的人打不开站点,也看不到提交框。
+
+### 4.6 日常节奏
+- **偶尔(重)**:刷底层数据 → `step4c` 等重算 CSV → `./build_and_deploy.sh --all`。
+- **日常(轻)**:`./build_and_deploy.sh --process-requests` 处理申请并发布。
+- **用户**:打开 URL → 邮箱验证 → 看清单/散点/候选/简报,或提交想看的代码。
+
+---
+
+## 5. 十三个工具(agent 深挖时调用)
 
 | # | 工具 | 客观信号 |
 |---|---|---|
@@ -136,7 +199,7 @@ python agent_step8_block_trade.py 601006    # 换成任意6位代码
 
 ---
 
-## 5. 贯穿全程的设计纪律
+## 6. 贯穿全程的设计纪律
 
 1. **数字全在确定性 Python 算**,LLM 只编排+定性,绝不做算术或编造数字。
 2. **先探针后写**:每个新接口先 probe 签名/字段,从不凭记忆猜。
@@ -157,7 +220,7 @@ python agent_step8_block_trade.py 601006    # 换成任意6位代码
 
 ---
 
-## 6. 能力边界(务必牢记)
+## 7. 能力边界(务必牢记)
 
 **能做:** 全市场高效缩小范围、系统化排雷、把"便宜/质量/现金流/分红/资金面"变成可查的客观数字、用定性尽调补足财报外信号、强制摊开估值假设。
 
@@ -171,7 +234,7 @@ python agent_step8_block_trade.py 601006    # 换成任意6位代码
 
 ---
 
-## 7. 待办 / 可改进(攒够真实案例再动,勿过度工程)
+## 8. 待办 / 可改进(攒够真实案例再动,勿过度工程)
 
 - 强周期股单年 ROE/PB 失真:agent 深挖已能识别,暂不在母清单层加"周期标记"
 - 个别票数据为空的容错(如茅台无互动易记录):实战遇到集中收集后统一加

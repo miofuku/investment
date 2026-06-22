@@ -27,9 +27,36 @@ from openai import OpenAI
 # 复用我们自己的确定性函数 / 缓存
 from step4b_market_factors import quality_of, QUALITY_CACHE, SECTOR_CACHE
 
+
+def _load_dotenv():
+    """读取本脚本同目录的 .env(KEY=VALUE 形式)。已存在的环境变量优先,不覆盖。
+    零依赖,无需 pip install python-dotenv。支持 # 注释、export 前缀与引号。"""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    if not os.path.exists(path):
+        return
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            if line.startswith("export "):
+                line = line[len("export "):]
+            key, _, val = line.partition("=")
+            key, val = key.strip(), val.strip().strip('"').strip("'")
+            if key:
+                os.environ.setdefault(key, val)
+
+
+_load_dotenv()
+
 # ---- GLM-5.1(智谱 Coding Plan,OpenAI 兼容)----
+_api_key = os.environ.get("ZAI_API_KEY")
+if not _api_key:
+    raise SystemExit(
+        "未找到 ZAI_API_KEY:请在 china-a/.env 写入 ZAI_API_KEY=你的key,"
+        "或在终端 export ZAI_API_KEY=你的key 后再运行。")
 client = OpenAI(
-    api_key=os.environ["ZAI_API_KEY"],
+    api_key=_api_key,
     base_url="https://api.z.ai/api/coding/paas/v4",
 )
 MODEL = "glm-5.1"          # 如端点要求别的名字,改这里即可
