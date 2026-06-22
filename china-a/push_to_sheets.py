@@ -65,6 +65,15 @@ def _clean_val(v):
     if isinstance(v, float) and (math.isnan(v) or math.isinf(v)): return ""
     return v
 
+
+def _cell(header, value):
+    """写入 Sheets 的单元格值。code 列强制文本(前置单引号)并补足6位,
+    否则 Google Sheets 会把 000651 当数字吃掉前导零(读回成 651)。"""
+    v = _clean_val(value)
+    if header == "code" and v not in ("", None):
+        return "'" + str(v).zfill(6)
+    return v
+
 # ================================================================
 # 配置
 # ================================================================
@@ -127,15 +136,19 @@ def upsert_sheet(sheet_name, records, key_cols=("code",), dryrun=False):
 
     ws = _get_or_create_sheet(sheet_name, headers)
 
+    # 去重 key 归一化:code 列补零(Sheets 可能把旧行的 000651 存成了 651)
+    def _key(d):
+        return tuple(str(d.get(c, "")).zfill(6) if c == "code" else str(d.get(c, ""))
+                     for c in key_cols)
+
     # reports表：追加模式（保留历史简报，按key去重）
     if sheet_name == SH.get("reports", "reports"):
         existing = ws.get_all_records()
-        existing_keys = {tuple(str(r.get(c,"")) for c in key_cols) for r in existing}
+        existing_keys = {_key(r) for r in existing}
         to_append = []
         for rec in records:
-            k = tuple(str(rec.get(c,"")) for c in key_cols)
-            if k not in existing_keys:
-                to_append.append([_clean_val(rec.get(h)) for h in headers])
+            if _key(rec) not in existing_keys:
+                to_append.append([_cell(h, rec.get(h)) for h in headers])
         if to_append:
             ws.append_rows(to_append, value_input_option="USER_ENTERED")
             print(f"  [{sheet_name}] 追加 {len(to_append)} 条新记录")
@@ -144,7 +157,7 @@ def upsert_sheet(sheet_name, records, key_cols=("code",), dryrun=False):
         return
 
     # 其他表：全量清空重写（1次API调用，不限速）
-    rows = [[_clean_val(rec.get(h)) for h in headers] for rec in records]
+    rows = [[_cell(h, rec.get(h)) for h in headers] for rec in records]
     ws.clear()
     ws.append_row(headers)                                    # 写header
     ws.append_rows(rows, value_input_option="USER_ENTERED")  # 写数据
@@ -434,6 +447,9 @@ def _read_reports_from_sheets():
         ss = _connect()
         ws = ss.worksheet(SH["reports"])
         rp = ws.get_all_records()
+        for r in rp:                        # Sheets 可能把 000651 读回成数字 651,补零纠正
+            if "code" in r:
+                r["code"] = str(r["code"]).zfill(6)
         print(f"  读取已有简报 {len(rp)} 条")
         return rp
     except Exception as e:

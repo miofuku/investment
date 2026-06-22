@@ -675,7 +675,7 @@ function openReport(code) {
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
   document.getElementById('page-reports').classList.add('active');
 
-  const r = DATA.reports.find(x=>x.code===code);
+  const r = DATA.reports.find(x => String(x.code).padStart(6,'0') === String(code).padStart(6,'0'));
   if (r) {
     setTimeout(()=>{
       const item = document.querySelector(`.report-item`);
