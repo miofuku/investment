@@ -1,0 +1,460 @@
+# -*- coding: utf-8 -*-
+"""
+push_to_sheets.py — 本地产出写入 Google Sheets
+================================================================
+结构:本地脚本(akshare/GLM在这里) → Google Sheets → Cloudflare前端
+安全:service_account.json 放本地、加入.gitignore,绝不上传
+
+依赖:pip install gspread pandas
+凭证:service_account.json 放在本脚本同目录(或 GSPREAD_SA_PATH 环境变量)
+
+Spreadsheet 结构(一个文件四张Sheet):
+  masterlist    母清单(全量或行业前N)
+  traditional   传统候选(A/B/交集)
+  reports       agent简报(含历史,按code+date去重)
+  financials    金融股备查(可选)
+
+用法:
+  python push_to_sheets.py --all          # 推母清单+传统候选
+  python push_to_sheets.py --report 600519  # 对一只票生成简报并入库
+  python push_to_sheets.py --dryrun --all   # 只打印不写入
+  python push_to_sheets.py --report 600519 --dryrun
+
+.gitignore 里加上:
+  service_account.json
+  ths_quality_cache.csv
+  sina_sector.csv
+"""
+
+import os
+import re
+import sys
+import json
+import math
+import time
+import datetime as dt
+import pandas as pd
+import gspread
+from gspread.exceptions import WorksheetNotFound
+
+def _clean_val(v):
+    """NaN/inf/None 统一转空字符串，避免 JSON 序列化报错。"""
+    if v is None: return ""
+    if isinstance(v, float) and (math.isnan(v) or math.isinf(v)): return ""
+    return v
+
+# ================================================================
+# 配置
+# ================================================================
+SA_PATH = os.environ.get("GSPREAD_SA_PATH", "service_account.json")
+SPREADSHEET_NAME = "A股价值投资系统"   # 你在 Google Drive 里新建的文件名
+
+# Sheet 名称(可改,前端读的是这些名字)
+SH = {
+    "masterlist":  "masterlist",
+    "traditional": "traditional",
+    "reports":     "reports",
+    "financials":  "financials",
+}
+
+TODAY = dt.date.today().strftime("%Y-%m-%d")
+
+# ================================================================
+# gspread 连接(懒加载,dryrun时不连)
+# ================================================================
+_gc = None
+_ss = None
+
+def _connect():
+    global _gc, _ss
+    if _gc is None:
+        _gc = gspread.service_account(filename=SA_PATH)
+        _ss = _gc.open(SPREADSHEET_NAME)
+    return _ss
+
+
+def _get_or_create_sheet(name, headers):
+    ss = _connect()
+    try:
+        ws = ss.worksheet(name)
+    except WorksheetNotFound:
+        ws = ss.add_worksheet(title=name, rows=5000, cols=len(headers))
+        ws.append_row(headers)
+        print(f"  [新建Sheet] {name}")
+    return ws
+
+
+# ================================================================
+# 写入:upsert(按 key_col 去重,存在则更新,不存在则追加)
+# ================================================================
+def upsert_sheet(sheet_name, records, key_cols=("code",), dryrun=False):
+    """全量刷新：clear后整体写入，避免逐行update触发Google Sheets 429限速。
+    reports表例外：按key_cols追加（不清空，保留历史）。
+    """
+    if not records:
+        print(f"  [{sheet_name}] 无数据,跳过")
+        return
+
+    headers = list(records[0].keys())
+
+    if dryrun:
+        print(f"  [dryrun] {sheet_name}: {len(records)} 条,headers={headers}")
+        print(f"    样本: {records[0]}")
+        return
+
+    ws = _get_or_create_sheet(sheet_name, headers)
+
+    # reports表：追加模式（保留历史简报，按key去重）
+    if sheet_name == SH.get("reports", "reports"):
+        existing = ws.get_all_records()
+        existing_keys = {tuple(str(r.get(c,"")) for c in key_cols) for r in existing}
+        to_append = []
+        for rec in records:
+            k = tuple(str(rec.get(c,"")) for c in key_cols)
+            if k not in existing_keys:
+                to_append.append([_clean_val(rec.get(h)) for h in headers])
+        if to_append:
+            ws.append_rows(to_append, value_input_option="USER_ENTERED")
+            print(f"  [{sheet_name}] 追加 {len(to_append)} 条新记录")
+        else:
+            print(f"  [{sheet_name}] 无新记录需追加")
+        return
+
+    # 其他表：全量清空重写（1次API调用，不限速）
+    rows = [[_clean_val(rec.get(h)) for h in headers] for rec in records]
+    ws.clear()
+    ws.append_row(headers)                                    # 写header
+    ws.append_rows(rows, value_input_option="USER_ENTERED")  # 写数据
+    print(f"  [{sheet_name}] 全量写入 {len(rows)} 条")
+
+
+# ================================================================
+# 数据准备:母清单
+# ================================================================
+def prepare_masterlist(path="factor_all_market_magic.csv", top_n=None):
+    """
+    top_n=None → 全量(~3500行,Sheets完全支持)
+    top_n=3    → 各行业前3,约240行(更轻量)
+    """
+    df = pd.read_csv(path, dtype={"code": str})
+    df["code"] = df["code"].str.zfill(6)
+    df = df[df["综合分"].notna()]   # 只要可排名的
+
+    if top_n:
+        df = df.sort_values("综合分").groupby("行业").head(top_n)
+
+    colmap = {
+        "code": "code", "name": "name", "行业": "industry", "pb": "pb",
+        "ROE_3y": "roe_3y", "综合分": "score", "便宜排名": "cheap_rank",
+        "质量排名": "quality_rank", "CFQ_w": "cfq", "负债率": "debt_ratio",
+        "红旗": "flags", "排名可信度": "rank_confidence",
+    }
+    out = df[[c for c in colmap if c in df.columns]].rename(columns=colmap)
+    # 数值列保留两位小数
+    for col in ["pb", "roe_3y", "score", "cfq", "debt_ratio"]:
+        if col in out.columns:
+            out[col] = out[col].round(2)
+    return out.where(pd.notna(out), None).to_dict("records")
+
+
+# ================================================================
+# 数据准备:传统候选
+# ================================================================
+def prepare_traditional(value_path="factor_trad_value.csv",
+                        stable_path="factor_trad_stable.csv"):
+    def load(p):
+        if not os.path.exists(p):
+            print(f"  [跳过] {p} 不存在")
+            return pd.DataFrame()
+        df = pd.read_csv(p, dtype={"code": str})
+        df["code"] = df["code"].str.zfill(6)
+        return df
+
+    a, b = load(value_path), load(stable_path)
+    if a.empty and b.empty:
+        return []
+
+    a_codes = set(a["code"]) if not a.empty else set()
+    b_codes = set(b["code"]) if not b.empty else set()
+    merged = pd.concat([a, b]).drop_duplicates("code")
+
+    def bucket(c):
+        if c in a_codes and c in b_codes:
+            return "交集(又便宜又稳)"
+        return "A-偏便宜" if c in a_codes else "B-偏稳健"
+
+    merged["bucket"] = merged["code"].apply(bucket)
+    colmap = {
+        "code": "code", "name": "name", "行业": "industry", "pb": "pb",
+        "ROE_3y": "roe_3y", "综合分": "score", "CFQ_w": "cfq",
+        "负债率": "debt_ratio", "红旗": "flags", "bucket": "bucket",
+        "排名可信度": "rank_confidence",
+    }
+    out = merged[[c for c in colmap if c in merged.columns]].rename(columns=colmap)
+    for col in ["pb", "roe_3y", "score", "cfq", "debt_ratio"]:
+        if col in out.columns:
+            out[col] = out[col].round(2)
+    return out.where(pd.notna(out), None).to_dict("records")
+
+
+# ================================================================
+# 数据准备:简报(从 agent Markdown 抽摘要)
+# ================================================================
+def _extract(pattern, text, default=None):
+    m = re.search(pattern, text, re.IGNORECASE)
+    return m.group(1).strip() if m else default
+
+
+def _lookup_name_industry(code):
+    """按代码从本地 CSV 缓存回查规范的 name / 行业。
+    比从简报 Markdown 正则抽取可靠得多(后者会把『行业』等字样误当公司名)。"""
+    code = str(code).zfill(6)
+    for path in ("factor_all_market_magic.csv", "sina_sector.csv"):
+        if not os.path.exists(path):
+            continue
+        try:
+            df = pd.read_csv(path, dtype={"code": str})
+            df["code"] = df["code"].str.zfill(6)
+            hit = df[df["code"] == code]
+            if not len(hit):
+                continue
+            r = hit.iloc[0]
+            name = r.get("name")
+            industry = r.get("行业") if "行业" in df.columns else None
+            return (str(name).strip() if pd.notna(name) else None,
+                    str(industry).strip() if (industry is not None and pd.notna(industry)) else None)
+        except Exception:
+            continue
+    return None, None
+
+
+def prepare_report(code, name, industry, markdown):
+    """从 agent 简报 Markdown 抽摘要字段,组装成一条 reports 表记录。"""
+    # 从简报里抽几个关键数字(用于列表展示,不用解析 Markdown)
+    roe  = _extract(r"3年[平均]*ROE[^%\d]*([\d.]+)%?", markdown)
+    roic = _extract(r"3年[平均]*ROIC[^%\d]*([\d.]+)%?", markdown)
+    pb   = _extract(r"\bPB\b[^\d]*([\d.]+)", markdown)
+
+    # 重大红旗判断
+    major_flags = []
+    if re.search(r"会计差错", markdown): major_flags.append("会计差错")
+    if re.search(r"立案|处罚", markdown): major_flags.append("监管处罚")
+    if re.search(r"问询函|关注函", markdown): major_flags.append("监管问询")
+    if re.search(r"ROIC.*可信.*false|失真警示", markdown): major_flags.append("ROIC失真")
+    if re.search(r"净减持", markdown): major_flags.append("产业资本净减持")
+    if re.search(r"大幅折价.*笔数.*[1-9]", markdown): major_flags.append("大宗折价")
+
+    # 深层解读摘要(前400字)
+    summary = ""
+    m = re.search(r"深层解读([\s\S]{0,600})", markdown)
+    if m:
+        summary = re.sub(r"[#*\|>_\-]{2,}", "", m.group(1))[:400].strip()
+
+    return {
+        "code": str(code).zfill(6),
+        "name": name,
+        "industry": industry,
+        "date": TODAY,
+        "roe_3y": round(float(roe), 2) if roe else None,
+        "roic_3y": round(float(roic), 2) if roic else None,
+        "pb": round(float(pb), 2) if pb else None,
+        "major_flags": ", ".join(major_flags) if major_flags else "",
+        "summary": summary,
+        "markdown": markdown,
+    }
+
+
+# ================================================================
+# 金融股备查
+# ================================================================
+def prepare_financials(path="factor_financials.csv"):
+    if not os.path.exists(path):
+        return []
+    df = pd.read_csv(path, dtype={"code": str})
+    df["code"] = df["code"].str.zfill(6)
+    colmap = {"code": "code", "name": "name", "行业": "industry",
+              "pb": "pb", "ROE_3y": "roe_3y"}
+    out = df[[c for c in colmap if c in df.columns]].rename(columns=colmap)
+    return out.where(pd.notna(out), None).to_dict("records")
+
+
+# ================================================================
+# 主流程
+# ================================================================
+def generate_data_js(ml, tr, fi, reports=None, out_path="data.js"):
+    """
+    把所有数据序列化成 data.js,前端直接引入,彻底绕过 CORS。
+    reports 如果传 None 则从 Google Sheets 读(需联网);
+    通常本地直接从已有的简报记录列表传入。
+    """
+    import json, math
+
+    def clean(obj):
+        if isinstance(obj, list):
+            return [clean(i) for i in obj]
+        if isinstance(obj, dict):
+            return {k: clean(v) for k,v in obj.items()}
+        if isinstance(obj, float) and (math.isnan(obj) or math.isinf(obj)):
+            return None
+        return obj
+
+    rp = reports or []
+    payload = {
+        "generated": TODAY,
+        "masterlist":  clean(ml),
+        "traditional": clean(tr),
+        "financials":  clean(fi),
+        "reports":     clean(rp),
+    }
+    js = f"// 自动生成,勿手动编辑。由 push_to_sheets.py 生成于 {TODAY}\n"
+    js += f"window.SHEET_DATA = {json.dumps(payload, ensure_ascii=False)};\n"
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write(js)
+    print(f"  → data.js 已生成({out_path}): "
+          f"母清单{len(ml)}条 / 候选{len(tr)}条 / 简报{len(rp)}条")
+    return out_path
+
+
+# ================================================================
+# 主流程
+# ================================================================
+def push_all(dryrun=False, top_n=None):
+    """推母清单 + 传统候选 + 金融股备查,并生成 data.js 供前端使用。"""
+    print(f"=== push_all {'[DRYRUN]' if dryrun else ''} ===")
+
+    print("\n[1/3] 母清单")
+    ml = prepare_masterlist(top_n=top_n)
+    print(f"  准备 {len(ml)} 条{'(全量)' if not top_n else f'(各行业前{top_n})'}")
+    upsert_sheet(SH["masterlist"], ml, key_cols=("code",), dryrun=dryrun)
+
+    print("\n[2/3] 传统候选")
+    tr = prepare_traditional()
+    print(f"  准备 {len(tr)} 条")
+    upsert_sheet(SH["traditional"], tr, key_cols=("code",), dryrun=dryrun)
+
+    print("\n[3/3] 金融股备查")
+    fi = prepare_financials()
+    print(f"  准备 {len(fi)} 条")
+    upsert_sheet(SH["financials"], fi, key_cols=("code",), dryrun=dryrun)
+
+    print("\n[生成 data.js]")
+    if not dryrun:
+        generate_data_js(ml, tr, fi)
+
+    print("\n完成。把 data.js 和 index.html 一起部署到 Cloudflare Pages。")
+
+
+def push_report(code, dryrun=False):
+    """对单只票生成 agent 简报并写入 reports Sheet。"""
+    import subprocess, tempfile
+    print(f"=== push_report {code} {'[DRYRUN]' if dryrun else ''} ===")
+
+    # 调 agent 生成简报(复用现有脚本)
+    print("  生成简报中(调 agent_step8)...")
+    result = subprocess.run(
+        [sys.executable, "agent_step8_block_trade.py", str(code)],
+        capture_output=True, text=True, encoding="utf-8",
+        cwd=os.path.dirname(os.path.abspath(__file__))  # 确保工作目录正确
+    )
+    output = result.stdout
+
+    if result.returncode != 0:
+        print(f"  [ERROR] agent_step8 退出码 {result.returncode}")
+        print(f"  完整 stderr:\n{result.stderr}")
+        return
+
+    # 过滤掉工具调用日志行，只保留简报正文
+    clean_lines = [
+        l for l in output.splitlines()
+        if not l.strip().startswith('[工具]')
+        and not l.strip().startswith('[GLM重试]')
+        and not l.strip().startswith('=== ')
+        and l.strip() != '数据已全部返回，下面生成完整简报。'
+    ]
+    markdown = '\n'.join(clean_lines).strip()
+
+    # 从输出里提取 "===" 分隔后的简报 Markdown
+    md_match = re.search(r"===\s*完整简报.*?===\n+([\s\S]+)", output)
+    if md_match:
+        markdown = md_match.group(1).strip()
+
+    if not markdown:
+        print("  [ERROR] 未能从 agent 输出中提取简报,请检查 agent_step8 输出")
+        print("  stderr:", result.stderr[:300])
+        return
+
+    # name/industry:优先从本地缓存按代码回查(可靠);缓存缺失再退回从简报正则抽取
+    name, industry = _lookup_name_industry(code)
+    if not name:
+        name = _extract(r"公司[名称全称简称]*[^\w]+([\w\s（）]+)", markdown) or code
+    if industry is None:
+        industry = _extract(r"所属行业[^\w]+([\w、和及]+)", markdown) or ""
+
+    rec = prepare_report(code, name.strip(), industry.strip(), markdown)
+    print(f"  抽取: ROE={rec['roe_3y']} ROIC={rec['roic_3y']} PB={rec['pb']}"
+          f" 重大红旗={rec['major_flags'] or '无'}")
+
+    upsert_sheet(SH["reports"], [rec],
+                 key_cols=("code", "date"),
+                 dryrun=dryrun)
+    if not dryrun:
+        print(f"  ✓ {code} 简报已入库 reports Sheet(date={TODAY})")
+        # 重新生成 data.js(含最新简报)
+        _rebuild_data_js()
+
+
+def _rebuild_data_js():
+    """从本地 CSV 重建 data.js(含已有简报从 Sheets 读)。"""
+    ml = prepare_masterlist()
+    tr = prepare_traditional()
+    fi = prepare_financials()
+    # 简报从 reports Sheet 读(需联网)——若失败则跳过简报部分
+    rp = []
+    try:
+        import gspread
+        gc = gspread.service_account(filename=SA_PATH)
+        ss = gc.open(SPREADSHEET_NAME)
+        ws = ss.worksheet(SH["reports"])
+        rp = ws.get_all_records()
+        print(f"  读取已有简报 {len(rp)} 条")
+    except Exception as e:
+        print(f"  [跳过简报] 读取 Sheets 失败: {e}")
+    generate_data_js(ml, tr, fi, rp)
+
+
+# ================================================================
+# CLI
+# ================================================================
+if __name__ == "__main__":
+    args = sys.argv[1:]
+    dryrun = "--dryrun" in args
+    args = [a for a in args if a != "--dryrun"]
+
+    if not args:
+        print("用法:")
+        print("  python push_to_sheets.py --all              推母清单+候选+金融股+生成data.js")
+        print("  python push_to_sheets.py --all --top 3      各行业前3(轻量版)")
+        print("  python push_to_sheets.py --report 600519    生成+入库简报+更新data.js")
+        print("  python push_to_sheets.py --report 600519 601006 600938  批量简报")
+        print("  python push_to_sheets.py --datajs           仅重新生成data.js")
+        print("  任何命令加 --dryrun 只打印不写入")
+        sys.exit(0)
+
+    if "--all" in args:
+        top_idx = args.index("--top") if "--top" in args else None
+        top_n = int(args[top_idx + 1]) if top_idx is not None else None
+        push_all(dryrun=dryrun, top_n=top_n)
+
+    elif "--report" in args:
+        codes = args[args.index("--report") + 1:]
+        if not codes:
+            print("请提供至少一个股票代码")
+            sys.exit(1)
+        for c in codes:
+            push_report(c, dryrun=dryrun)
+            if len(codes) > 1:
+                time.sleep(2)
+
+    elif "--datajs" in args:
+        print("=== 重新生成 data.js ===")
+        _rebuild_data_js()

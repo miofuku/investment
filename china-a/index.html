@@ -1,0 +1,706 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>A股价值投资系统</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="data.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>
+<style>
+:root {
+  --bg:       #f5f7fa;
+  --bg2:      #ffffff;
+  --bg3:      #eef1f6;
+  --border:   #dde2ec;
+  --text:     #1a2035;
+  --muted:    #6b7a99;
+  --accent:   #0070f3;
+  --accent2:  #00a878;
+  --warn:     #e53e3e;
+  --warn2:    #d97706;
+  --mono:     'JetBrains Mono', monospace;
+  --sans:     'Inter', sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:14px;min-height:100vh}
+
+/* ── NAV ── */
+nav{display:flex;align-items:center;gap:0;border-bottom:1px solid var(--border);background:var(--bg2);position:sticky;top:0;z-index:100}
+.nav-brand{font-family:var(--mono);font-size:13px;color:var(--accent);padding:0 24px;border-right:1px solid var(--border);height:48px;display:flex;align-items:center;letter-spacing:.05em;white-space:nowrap}
+.nav-tabs{display:flex;height:48px}
+.nav-tab{padding:0 20px;height:100%;display:flex;align-items:center;cursor:pointer;color:var(--muted);font-size:13px;font-weight:500;border-bottom:2px solid transparent;transition:all .15s;white-space:nowrap;background:none;border-top:none;border-left:none;border-right:none}
+.nav-tab:hover{color:var(--text)}
+.nav-tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+.nav-right{margin-left:auto;padding:0 20px;font-family:var(--mono);font-size:11px;color:var(--muted)}
+#update-time{color:var(--accent2)}
+
+/* ── PAGES ── */
+.page{display:none;padding:24px;max-width:1600px;margin:0 auto}
+.page.active{display:block}
+
+/* ── TOOLBAR ── */
+.toolbar{display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap;align-items:center}
+.toolbar input,.toolbar select{background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:7px 12px;border-radius:4px;font-size:13px;font-family:var(--sans);outline:none}
+.toolbar input:focus,.toolbar select:focus{border-color:var(--accent)}
+.toolbar input{width:200px}
+.toolbar select{cursor:pointer}
+.btn{background:var(--bg3);border:1px solid var(--border);color:var(--muted);padding:7px 14px;border-radius:4px;font-size:12px;cursor:pointer;font-family:var(--mono);transition:all .15s}
+.btn:hover{border-color:var(--accent);color:var(--accent)}
+.btn.active{border-color:var(--accent);color:var(--accent);background:rgba(0,212,170,.08)}
+.stat-bar{display:flex;gap:24px;margin-left:auto}
+.stat{text-align:right}
+.stat-val{font-family:var(--mono);font-size:16px;color:var(--accent);font-weight:500}
+.stat-lbl{font-size:11px;color:var(--muted);margin-top:2px}
+
+/* ── TABLE ── */
+.tbl-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:6px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+thead th{background:var(--bg3);padding:10px 14px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);letter-spacing:.06em;text-transform:uppercase;border-bottom:1px solid var(--border);white-space:nowrap;cursor:pointer;user-select:none}
+thead th:hover{color:var(--text)}
+thead th.sorted{color:var(--accent)}
+thead th .sort-icon{margin-left:4px;opacity:.5}
+thead th.sorted .sort-icon{opacity:1}
+tbody tr{border-bottom:1px solid rgba(30,45,69,.6);transition:background .1s}
+tbody tr:hover{background:var(--bg3)}
+tbody tr:last-child{border-bottom:none}
+td{padding:9px 14px;font-family:var(--mono);font-size:12px;white-space:nowrap}
+td.name{font-family:var(--sans);font-size:13px;font-weight:500;color:var(--text)}
+td.name a{color:inherit;text-decoration:none;cursor:pointer}
+td.name a:hover{color:var(--accent)}
+td.code{color:var(--muted)}
+td.num{text-align:right}
+.badge{display:inline-block;padding:2px 7px;border-radius:3px;font-size:11px;font-family:var(--sans)}
+.badge-red{background:rgba(229,62,62,.12);color:#c0392b}
+.badge-yellow{background:rgba(217,119,6,.14);color:#b45309}
+.badge-green{background:rgba(0,168,120,.14);color:#00805c}
+.badge-blue{background:rgba(0,112,243,.12);color:#0058c0}
+.badge-gray{background:rgba(107,122,153,.14);color:#52607d}
+.flag-cell{max-width:200px;white-space:normal;line-height:1.4}
+
+/* ── SCATTER ── */
+#scatter-wrap{position:relative;margin-top:8px}
+#scatter-canvas{width:100%;cursor:crosshair;display:block;border:1px solid var(--border);border-radius:6px}
+#scatter-tooltip{position:absolute;pointer-events:none;background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:10px 14px;font-size:12px;display:none;z-index:50;min-width:180px}
+#scatter-tooltip .tt-name{font-size:14px;font-weight:600;color:var(--text);margin-bottom:6px}
+#scatter-tooltip .tt-row{display:flex;justify-content:space-between;gap:16px;margin-top:3px;color:var(--muted)}
+#scatter-tooltip .tt-val{color:var(--text);font-family:var(--mono)}
+.scatter-legend{display:flex;gap:20px;margin-top:10px;font-size:12px;color:var(--muted)}
+.legend-dot{width:10px;height:10px;border-radius:50%;display:inline-block;margin-right:5px;vertical-align:middle}
+.scatter-controls{display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap;align-items:center}
+
+/* ── TRADITIONAL ── */
+.bucket-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:24px}
+@media(max-width:900px){.bucket-grid{grid-template-columns:1fr}}
+.bucket-card{background:var(--bg2);border:1px solid var(--border);border-radius:8px;overflow:hidden}
+.bucket-header{padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px}
+.bucket-title{font-weight:600;font-size:14px}
+.bucket-count{font-family:var(--mono);font-size:12px;color:var(--muted)}
+.bucket-body{overflow-x:auto}
+.bucket-body table{font-size:12px}
+.bucket-body thead th{font-size:10px;padding:8px 12px}
+.bucket-body td{padding:7px 12px}
+
+/* ── REPORTS ── */
+.report-grid{display:grid;grid-template-columns:300px 1fr;gap:0;height:calc(100vh - 120px);border:1px solid var(--border);border-radius:8px;overflow:hidden}
+.report-list{border-right:1px solid var(--border);overflow-y:auto;background:var(--bg2)}
+.report-item{padding:14px 16px;border-bottom:1px solid var(--border);cursor:pointer;transition:background .1s}
+.report-item:hover{background:var(--bg3)}
+.report-item.active{background:rgba(0,212,170,.08);border-left:2px solid var(--accent)}
+.ri-name{font-weight:600;font-size:14px;margin-bottom:4px}
+.ri-meta{font-size:11px;color:var(--muted);font-family:var(--mono)}
+.ri-flags{margin-top:5px}
+.report-detail{overflow-y:auto;padding:28px 32px;background:var(--bg)}
+.report-empty{display:flex;align-items:center;justify-content:center;height:100%;color:var(--muted);font-size:14px;flex-direction:column;gap:12px}
+.report-empty-icon{font-size:40px;opacity:.3}
+/* Markdown 简报样式 */
+.md-body h1{font-size:20px;font-weight:600;margin:0 0 20px;padding-bottom:12px;border-bottom:1px solid var(--border);color:var(--text)}
+.md-body h2{font-size:15px;font-weight:600;color:var(--accent);margin:24px 0 12px;letter-spacing:.04em}
+.md-body h3{font-size:13px;font-weight:600;color:var(--accent2);margin:16px 0 8px}
+.md-body p{line-height:1.7;color:var(--text);margin-bottom:10px}
+.md-body table{width:100%;border-collapse:collapse;margin:12px 0;font-size:12px}
+.md-body table th{background:var(--bg3);padding:8px 12px;text-align:left;font-size:11px;color:var(--muted);border:1px solid var(--border)}
+.md-body table td{padding:7px 12px;border:1px solid var(--border);font-family:var(--mono);color:var(--text)}
+.md-body table tr:nth-child(even) td{background:rgba(0,0,0,.02)}
+.md-body blockquote{border-left:3px solid var(--accent2);padding:10px 16px;margin:12px 0;background:rgba(0,112,243,.04);border-radius:0 4px 4px 0;color:var(--text)}
+.md-body strong{color:var(--text);font-weight:600}
+.md-body code{font-family:var(--mono);background:var(--bg3);padding:2px 6px;border-radius:3px;font-size:11px;color:var(--accent)}
+.md-body ul,.md-body ol{padding-left:20px;margin-bottom:10px;line-height:1.8;color:var(--text)}
+.md-body hr{border:none;border-top:1px solid var(--border);margin:20px 0}
+.md-body li{margin-bottom:2px}
+
+/* ── LOADING ── */
+.loading{text-align:center;padding:60px;color:var(--muted)}
+.loading-dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--accent);margin:0 3px;animation:blink 1.2s infinite}
+.loading-dot:nth-child(2){animation-delay:.2s}
+.loading-dot:nth-child(3){animation-delay:.4s}
+@keyframes blink{0%,80%,100%{opacity:.2}40%{opacity:1}}
+
+/* ── PAGINATION ── */
+.pagination{display:flex;gap:6px;margin-top:14px;align-items:center;justify-content:flex-end}
+.page-btn{background:var(--bg3);border:1px solid var(--border);color:var(--muted);padding:5px 10px;border-radius:4px;cursor:pointer;font-size:12px;font-family:var(--mono)}
+.page-btn:hover,.page-btn.active{border-color:var(--accent);color:var(--accent)}
+.page-info{font-size:12px;color:var(--muted);font-family:var(--mono);margin:0 8px}
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="nav-brand">▲ A股价值投资</div>
+  <div class="nav-tabs">
+    <button class="nav-tab active" onclick="showPage('masterlist')">母清单</button>
+    <button class="nav-tab" onclick="showPage('scatter')">估值散点</button>
+    <button class="nav-tab" onclick="showPage('traditional')">传统候选</button>
+    <button class="nav-tab" onclick="showPage('reports')">深挖简报</button>
+  </div>
+  <div class="nav-right">更新于 <span id="update-time">—</span></div>
+</nav>
+
+<!-- ══ 母清单 ══ -->
+<div class="page active" id="page-masterlist">
+  <div class="toolbar">
+    <input type="text" id="ml-search" placeholder="搜索代码 / 名称…" oninput="renderMasterlist()">
+    <select id="ml-industry" onchange="renderMasterlist()"><option value="">全部行业</option></select>
+    <select id="ml-flag" onchange="renderMasterlist()">
+      <option value="">全部</option>
+      <option value="noflag">无风险红旗</option>
+      <option value="flag">有风险红旗</option>
+    </select>
+    <select id="ml-conf" onchange="renderMasterlist()">
+      <option value="">全部可信度</option>
+      <option value="正常">正常</option>
+      <option value="低">低(样本&lt;5)</option>
+    </select>
+    <div class="stat-bar">
+      <div class="stat"><div class="stat-val" id="ml-count">—</div><div class="stat-lbl">只股票</div></div>
+      <div class="stat"><div class="stat-val" id="ml-industry-count">—</div><div class="stat-lbl">个行业</div></div>
+    </div>
+  </div>
+  <div class="tbl-wrap" id="ml-table-wrap">
+    <div class="loading"><span class="loading-dot"></span><span class="loading-dot"></span><span class="loading-dot"></span><br><br>加载母清单…</div>
+  </div>
+  <div class="pagination" id="ml-pagination"></div>
+</div>
+
+<!-- ══ 散点图 ══ -->
+<div class="page" id="page-scatter">
+  <div class="scatter-controls">
+    <select id="sc-industry" onchange="drawScatter()"><option value="">全部行业</option></select>
+    <select id="sc-flag" onchange="drawScatter()">
+      <option value="">全部</option>
+      <option value="noflag">无风险红旗</option>
+    </select>
+    <select id="sc-pb-max" onchange="drawScatter()">
+      <option value="10">市净率 ≤ 10</option>
+      <option value="5" selected>市净率 ≤ 5</option>
+      <option value="3">市净率 ≤ 3</option>
+      <option value="2">市净率 ≤ 2</option>
+    </select>
+    <span style="color:var(--muted);font-size:12px;margin-left:8px">← 左下角 = 又便宜又赚钱 &nbsp;|&nbsp; 点击任意点查看简报</span>
+  </div>
+  <div id="scatter-wrap">
+    <canvas id="scatter-canvas" height="520"></canvas>
+    <div id="scatter-tooltip"></div>
+  </div>
+  <div class="scatter-legend">
+    <span><span class="legend-dot" style="background:#00a878"></span>无风险红旗</span>
+    <span><span class="legend-dot" style="background:#d97706"></span>有风险红旗</span>
+    <span><span class="legend-dot" style="background:#e53e3e"></span>低可信度(样本少)</span>
+  </div>
+</div>
+
+<!-- ══ 传统候选 ══ -->
+<div class="page" id="page-traditional">
+  <div class="bucket-grid" id="trad-grid">
+    <div class="loading" style="grid-column:1/-1"><span class="loading-dot"></span><span class="loading-dot"></span><span class="loading-dot"></span><br><br>加载传统候选…</div>
+  </div>
+</div>
+
+<!-- ══ 简报 ══ -->
+<div class="page" id="page-reports">
+  <div class="report-grid" id="report-grid">
+    <div class="report-list" id="report-list">
+      <div class="loading"><span class="loading-dot"></span><span class="loading-dot"></span><span class="loading-dot"></span></div>
+    </div>
+    <div class="report-detail" id="report-detail">
+      <div class="report-empty"><div class="report-empty-icon">📊</div><div>从左侧选择一只股票查看完整简报</div></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ══ 数据源(从 data.js 读,无需任何网络请求)══
+// data.js 由本地 push_to_sheets.py --all 生成,与 index.html 一起部署
+function loadData() {
+  if (!window.SHEET_DATA) {
+    console.error('未找到 SHEET_DATA,请确认 data.js 已与 index.html 一起部署');
+    return { masterlist:[], traditional:[], financials:[], reports:[] };
+  }
+  return window.SHEET_DATA;
+}
+
+// ══ 全局状态 ══
+const DATA = { masterlist:[], traditional:[], reports:[] };
+let ML_SORTED = { col:'score', asc:true };
+let ML_PAGE = 1;
+const ML_PAGE_SIZE = 50;
+let scatterData = [];
+
+// ══ CSV 加载(已废弃,数据来自 data.js)══
+// 保留空函数避免引用报错
+function loadCSV(key) { return Promise.resolve([]); }
+
+function num(v) { const n = parseFloat(v); return isNaN(n) ? null : n; }
+function fmt(v, d=2) { const n = num(v); return n===null ? '—' : n.toFixed(d); }
+function fmtPct(v) { const n = num(v); return n===null ? '—' : n.toFixed(1)+'%'; }
+
+// 按代码从母清单/传统候选回查规范名称与行业(简报记录里的 name/industry 可能因抽取失误而错位)
+function lookupStock(code) {
+  const c = String(code).padStart(6,'0');
+  const match = r => String(r.code).padStart(6,'0') === c;
+  return DATA.masterlist.find(match) || DATA.traditional.find(match) || null;
+}
+
+// ══ 导航 ══
+function showPage(name) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('page-'+name).classList.add('active');
+  event.currentTarget.classList.add('active');
+  if (name === 'scatter') setTimeout(drawScatter, 50);
+}
+
+// ══════════════════════════════════════════
+// 母清单
+// ══════════════════════════════════════════
+function initMasterlist() {
+  const industries = [...new Set(DATA.masterlist.map(r=>r.industry).filter(Boolean))].sort();
+  const sel = document.getElementById('ml-industry');
+  industries.forEach(ind => {
+    const opt = document.createElement('option');
+    opt.value = ind; opt.textContent = ind;
+    sel.appendChild(opt);
+  });
+  // 同步到散点行业选择器
+  const scSel = document.getElementById('sc-industry');
+  industries.forEach(ind => {
+    const opt = document.createElement('option');
+    opt.value = ind; opt.textContent = ind;
+    scSel.appendChild(opt);
+  });
+  renderMasterlist();
+}
+
+function filterMasterlist() {
+  const q = document.getElementById('ml-search').value.toLowerCase();
+  const ind = document.getElementById('ml-industry').value;
+  const flag = document.getElementById('ml-flag').value;
+  const conf = document.getElementById('ml-conf').value;
+  return DATA.masterlist.filter(r => {
+    if (q && !r.code?.includes(q) && !r.name?.toLowerCase().includes(q) && !r.industry?.toLowerCase().includes(q)) return false;
+    if (ind && r.industry !== ind) return false;
+    if (flag === 'noflag' && r.flags) return false;
+    if (flag === 'flag' && !r.flags) return false;
+    if (conf === '正常' && r.rank_confidence !== '正常') return false;
+    if (conf === '低' && !r.rank_confidence?.includes('低')) return false;
+    return true;
+  });
+}
+
+function sortRows(rows) {
+  const col = ML_SORTED.col, asc = ML_SORTED.asc;
+  return [...rows].sort((a,b) => {
+    const av = num(a[col]), bv = num(b[col]);
+    if (av===null && bv===null) return 0;
+    if (av===null) return 1; if (bv===null) return -1;
+    return asc ? av-bv : bv-av;
+  });
+}
+
+function renderMasterlist() {
+  ML_PAGE = 1;
+  const filtered = filterMasterlist();
+  const sorted = sortRows(filtered);
+  document.getElementById('ml-count').textContent = filtered.length;
+  document.getElementById('ml-industry-count').textContent = [...new Set(filtered.map(r=>r.industry).filter(Boolean))].length;
+  renderMlPage(sorted);
+}
+
+function renderMlPage(sorted) {
+  const total = sorted.length;
+  const pages = Math.ceil(total / ML_PAGE_SIZE);
+  const slice = sorted.slice((ML_PAGE-1)*ML_PAGE_SIZE, ML_PAGE*ML_PAGE_SIZE);
+
+  const cols = [
+    {key:'code',label:'代码',sortable:false},
+    {key:'name',label:'名称',sortable:false},
+    {key:'industry',label:'行业',sortable:false},
+    {key:'score',label:'综合分',sortable:true},
+    {key:'pb',label:'市净率PB',sortable:true},
+    {key:'roe_3y',label:'三年ROE',sortable:true},
+    {key:'cfq',label:'现金流质量',sortable:true},
+    {key:'debt_ratio',label:'负债率',sortable:true},
+    {key:'cheap_rank',label:'便宜排名',sortable:true},
+    {key:'quality_rank',label:'质量排名',sortable:true},
+    {key:'flags',label:'风险红旗',sortable:false},
+    {key:'rank_confidence',label:'可信度',sortable:false},
+  ];
+
+  let html = '<table><thead><tr>';
+  cols.forEach(c => {
+    const isSorted = ML_SORTED.col === c.key;
+    const icon = isSorted ? (ML_SORTED.asc ? '↑' : '↓') : '↕';
+    html += `<th class="${isSorted?'sorted':''}" ${c.sortable?`onclick="sortML('${c.key}')"`:''}>
+      ${c.label}${c.sortable?`<span class="sort-icon">${icon}</span>`:''}
+    </th>`;
+  });
+  html += '</tr></thead><tbody>';
+
+  slice.forEach(r => {
+    const hasFlag = r.flags && r.flags.trim();
+    const lowConf = r.rank_confidence?.includes('低');
+    const pb = num(r.pb);
+    const roe = num(r.roe_3y);
+    const pbColor = pb!==null ? (pb<1?'color:#00805c;font-weight:600':pb<2?'color:var(--text)':'color:var(--muted)') : '';
+    const roeColor = roe!==null ? (roe>15?'color:#00805c;font-weight:600':roe>8?'color:var(--text)':'color:var(--muted)') : '';
+
+    html += `<tr>
+      <td class="code">${r.code||'—'}</td>
+      <td class="name"><a onclick="openReport('${r.code}')">${r.name||'—'}</a></td>
+      <td style="color:var(--muted);font-size:12px">${r.industry||'—'}</td>
+      <td class="num" style="color:var(--accent);font-weight:500">${fmt(r.score,1)}</td>
+      <td class="num" style="${pbColor}">${fmt(r.pb)}</td>
+      <td class="num" style="${roeColor}">${fmtPct(r.roe_3y)}</td>
+      <td class="num">${fmt(r.cfq)}</td>
+      <td class="num">${fmtPct(r.debt_ratio)}</td>
+      <td class="num" style="color:var(--muted)">${fmt(r.cheap_rank,0)}</td>
+      <td class="num" style="color:var(--muted)">${fmt(r.quality_rank,0)}</td>
+      <td class="flag-cell">${hasFlag ? `<span class="badge badge-red">${r.flags}</span>` : '<span style="color:var(--muted)">—</span>'}</td>
+      <td>${lowConf ? `<span class="badge badge-yellow">低</span>` : '<span class="badge badge-green">正常</span>'}</td>
+    </tr>`;
+  });
+  html += '</tbody></table>';
+  document.getElementById('ml-table-wrap').innerHTML = html;
+
+  // 分页
+  let pg = '';
+  if (pages > 1) {
+    pg += `<span class="page-info">第${ML_PAGE}/${pages}页，共${total}条</span>`;
+    if (ML_PAGE > 1) pg += `<button class="page-btn" onclick="goPage(${ML_PAGE-1})">‹ 上页</button>`;
+    const start = Math.max(1, ML_PAGE-2), end = Math.min(pages, ML_PAGE+2);
+    for (let i=start;i<=end;i++) pg += `<button class="page-btn ${i===ML_PAGE?'active':''}" onclick="goPage(${i})">${i}</button>`;
+    if (ML_PAGE < pages) pg += `<button class="page-btn" onclick="goPage(${ML_PAGE+1})">下页 ›</button>`;
+  }
+  document.getElementById('ml-pagination').innerHTML = pg;
+  window._mlSorted = sorted;
+}
+
+function sortML(col) {
+  if (ML_SORTED.col === col) ML_SORTED.asc = !ML_SORTED.asc;
+  else { ML_SORTED.col = col; ML_SORTED.asc = true; }
+  const filtered = filterMasterlist();
+  const sorted = sortRows(filtered);
+  ML_PAGE = 1;
+  renderMlPage(sorted);
+}
+
+function goPage(p) {
+  ML_PAGE = p;
+  renderMlPage(window._mlSorted || []);
+  document.getElementById('page-masterlist').scrollTop = 0;
+}
+
+// ══════════════════════════════════════════
+// 散点图
+// ══════════════════════════════════════════
+function drawScatter() {
+  const canvas = document.getElementById('scatter-canvas');
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const W = canvas.parentElement.clientWidth;
+  const H = 520;
+  canvas.width = W * dpr; canvas.height = H * dpr;
+  canvas.style.width = W+'px'; canvas.style.height = H+'px';
+  ctx.scale(dpr, dpr);
+
+  const ind = document.getElementById('sc-industry').value;
+  const flag = document.getElementById('sc-flag').value;
+  const pbMax = parseFloat(document.getElementById('sc-pb-max').value);
+
+  let rows = DATA.masterlist.filter(r => {
+    const pb = num(r.pb), roe = num(r.roe_3y);
+    if (pb===null||roe===null) return false;
+    if (pb > pbMax || pb <= 0) return false;
+    if (ind && r.industry !== ind) return false;
+    if (flag==='noflag' && r.flags) return false;
+    return true;
+  });
+
+  const pad = {l:60,r:20,t:20,b:50};
+  const pw = W - pad.l - pad.r, ph = H - pad.t - pad.b;
+
+  // 背景
+  ctx.fillStyle = '#f5f7fa';
+  ctx.fillRect(0,0,W,H);
+
+  // 网格
+  ctx.strokeStyle = '#dde2ec'; ctx.lineWidth = 1;
+  const roeVals = rows.map(r=>num(r.roe_3y)).filter(v=>v!==null);
+  const pbVals  = rows.map(r=>num(r.pb)).filter(v=>v!==null);
+  const roeMin = Math.min(0,...roeVals), roeMax = Math.max(25,...roeVals);
+  const pbMin = 0, pbMaxActual = Math.min(pbMax, Math.max(...pbVals,2));
+
+  const sx = v => pad.l + (v-pbMin)/(pbMaxActual-pbMin)*pw;
+  const sy = v => pad.t + ph - (v-roeMin)/(roeMax-roeMin)*ph;
+
+  for (let i=0;i<=5;i++) {
+    const x = pad.l + i/5*pw;
+    ctx.beginPath(); ctx.moveTo(x,pad.t); ctx.lineTo(x,pad.t+ph); ctx.stroke();
+    const y = pad.t + i/5*ph;
+    ctx.beginPath(); ctx.moveTo(pad.l,y); ctx.lineTo(pad.l+pw,y); ctx.stroke();
+  }
+
+  // 轴标签
+  ctx.fillStyle = '#6b7a99'; ctx.font = '11px JetBrains Mono,monospace'; ctx.textAlign='center';
+  for (let i=0;i<=5;i++) {
+    const pbV = pbMin + i/5*(pbMaxActual-pbMin);
+    ctx.fillText(pbV.toFixed(1), pad.l+i/5*pw, H-16);
+    const roeV = roeMin + (1-i/5)*(roeMax-roeMin);
+    ctx.textAlign='right';
+    ctx.fillText(roeV.toFixed(0)+'%', pad.l-8, pad.t+i/5*ph+4);
+    ctx.textAlign='center';
+  }
+  ctx.fillStyle='#6b7fa3'; ctx.font='12px Inter,sans-serif';
+  ctx.fillText('市净率PB（估值）→', pad.l+pw/2, H-2);
+  ctx.save(); ctx.translate(14, pad.t+ph/2); ctx.rotate(-Math.PI/2);
+  ctx.fillText('← 三年ROE（盈利能力）', 0, 0); ctx.restore();
+
+  // 左下角象限提示(低PB=x轴左侧,高ROE=y轴上方)
+  ctx.fillStyle='rgba(0,112,243,.06)';
+  ctx.fillRect(pad.l, pad.t, pw*0.35, ph*0.38);
+  ctx.fillStyle='rgba(0,112,243,.5)'; ctx.font='11px Inter';
+  ctx.textAlign='left';
+  ctx.fillText('又便宜又赚钱', pad.l+8, pad.t+16);
+
+  // 点
+  scatterData = [];
+  rows.forEach(r => {
+    const pb = num(r.pb), roe = num(r.roe_3y);
+    const x = sx(pb), y = sy(roe);
+    const hasFlag = r.flags && r.flags.trim();
+    const lowConf = r.rank_confidence?.includes('低');
+    const color = lowConf ? '#e53e3e' : hasFlag ? '#d97706' : '#00a878';
+    const score = num(r.score);
+    const radius = score !== null ? Math.max(3, 7 - score*0.3) : 4;
+
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI*2);
+    ctx.fillStyle = color+'44';
+    ctx.fill();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    scatterData.push({x,y,r:radius+2,data:r});
+  });
+}
+
+// 散点 tooltip
+const scCanvas = document.getElementById('scatter-canvas');
+const tooltip = document.getElementById('scatter-tooltip');
+scCanvas.addEventListener('mousemove', e => {
+  const rect = scCanvas.getBoundingClientRect();
+  const mx = (e.clientX-rect.left), my = (e.clientY-rect.top);
+  let hit = null;
+  for (const pt of scatterData) {
+    if (Math.hypot(mx-pt.x, my-pt.y) < pt.r+3) { hit=pt; break; }
+  }
+  if (hit) {
+    const r = hit.data;
+    tooltip.style.display='block';
+    tooltip.style.left = (mx+14)+'px';
+    tooltip.style.top  = (my-10)+'px';
+    tooltip.innerHTML = `
+      <div class="tt-name">${r.name} <span style="color:var(--muted);font-size:11px">${r.code}</span></div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:6px">${r.industry}</div>
+      <div class="tt-row"><span>综合分</span><span class="tt-val" style="color:#0070f3">${fmt(r.score,1)}</span></div>
+      <div class="tt-row"><span>市净率PB</span><span class="tt-val">${fmt(r.pb)}</span></div>
+      <div class="tt-row"><span>三年ROE</span><span class="tt-val">${fmtPct(r.roe_3y)}</span></div>
+      <div class="tt-row"><span>负债率</span><span class="tt-val">${fmtPct(r.debt_ratio)}</span></div>
+      ${r.flags?`<div style="margin-top:6px"><span class="badge badge-red">${r.flags}</span></div>`:''}
+    `;
+    scCanvas.style.cursor='pointer';
+  } else {
+    tooltip.style.display='none';
+    scCanvas.style.cursor='crosshair';
+  }
+});
+scCanvas.addEventListener('click', e => {
+  const rect = scCanvas.getBoundingClientRect();
+  const mx = (e.clientX-rect.left), my = (e.clientY-rect.top);
+  for (const pt of scatterData) {
+    if (Math.hypot(mx-pt.x, my-pt.y) < pt.r+3) {
+      openReport(pt.data.code);
+      return;
+    }
+  }
+});
+window.addEventListener('resize', () => {
+  if (document.getElementById('page-scatter').classList.contains('active')) drawScatter();
+});
+
+// ══════════════════════════════════════════
+// 传统候选
+// ══════════════════════════════════════════
+function renderTraditional() {
+  const buckets = {
+    '交集(又便宜又稳)': { color:'#00805c', label:'交集 — 又便宜又稳', rows:[] },
+    'B-偏稳健':         { color:'#0058c0', label:'B — 偏稳健(活得久优先)', rows:[] },
+    'A-偏便宜':         { color:'#b45309', label:'A — 偏便宜(估值优先)', rows:[] },
+  };
+  DATA.traditional.forEach(r => {
+    const b = r.bucket;
+    if (buckets[b]) buckets[b].rows.push(r);
+  });
+
+  let html = '';
+  Object.entries(buckets).forEach(([key,bk]) => {
+    if (!bk.rows.length) return;
+    const rows = [...bk.rows].sort((a,b) => (num(a.score)||99)-(num(b.score)||99));
+    html += `<div class="bucket-card">
+      <div class="bucket-header">
+        <span class="legend-dot" style="background:${bk.color};width:12px;height:12px;border-radius:50%;display:inline-block"></span>
+        <span class="bucket-title" style="color:${bk.color}">${bk.label}</span>
+        <span class="bucket-count">${rows.length} 只</span>
+      </div>
+      <div class="bucket-body">
+        <table><thead><tr>
+          <th>代码</th><th>名称</th><th>行业</th>
+          <th>综合分</th><th>市净率PB</th><th>三年ROE</th><th>现金流质量</th><th>负债率</th><th>风险红旗</th>
+        </tr></thead><tbody>`;
+    rows.forEach(r => {
+      const hasFlag = r.flags && r.flags.trim();
+      html += `<tr>
+        <td class="code" style="color:var(--muted)">${r.code}</td>
+        <td style="font-weight:500"><a style="cursor:pointer;color:inherit;text-decoration:none" onclick="openReport('${r.code}')">${r.name}</a></td>
+        <td style="color:var(--muted);font-size:11px">${r.industry}</td>
+        <td class="num" style="color:${bk.color}">${fmt(r.score,1)}</td>
+        <td class="num">${fmt(r.pb)}</td>
+        <td class="num">${fmtPct(r.roe_3y)}</td>
+        <td class="num">${fmt(r.cfq)}</td>
+        <td class="num">${fmtPct(r.debt_ratio)}</td>
+        <td>${hasFlag?`<span class="badge badge-red" style="font-size:10px">${r.flags}</span>`:'<span style="color:var(--muted)">—</span>'}</td>
+      </tr>`;
+    });
+    html += '</tbody></table></div></div>';
+  });
+
+  // 如果交集不够两列,补一个金融股小卡片
+  document.getElementById('trad-grid').innerHTML = html || '<div style="color:var(--muted);padding:40px">暂无传统候选数据</div>';
+}
+
+// ══════════════════════════════════════════
+// 简报
+// ══════════════════════════════════════════
+function renderReportList() {
+  const list = document.getElementById('report-list');
+  if (!DATA.reports.length) {
+    list.innerHTML = '<div style="padding:24px;color:var(--muted);font-size:13px">暂无简报<br><br>运行:<br><code style="font-size:11px">python push_to_sheets.py<br>--report 600519</code></div>';
+    return;
+  }
+  // 按日期倒序
+  const sorted = [...DATA.reports].sort((a,b)=>b.date?.localeCompare(a.date||'')||0);
+  list.innerHTML = sorted.map(r => {
+    const flags = r.major_flags && r.major_flags.trim();
+    const meta = lookupStock(r.code);
+    const name = (meta && meta.name) || r.name || r.code;
+    const industry = (meta && meta.industry) || r.industry || '';
+    return `<div class="report-item" onclick="showReport(this,'${r.code}','${r.date}')">
+      <div class="ri-name">${name} <span style="color:var(--muted);font-size:11px;font-family:var(--mono)">${r.code}</span></div>
+      <div class="ri-meta">${industry}　${r.date||''}</div>
+      <div class="ri-meta" style="margin-top:3px">三年ROE ${fmtPct(r.roe_3y)} &nbsp;|&nbsp; ROIC ${fmtPct(r.roic_3y)} &nbsp;|&nbsp; 市净率 ${fmt(r.pb)}</div>
+      ${flags?`<div class="ri-flags"><span class="badge badge-red" style="font-size:10px">${flags}</span></div>`:''}
+    </div>`;
+  }).join('');
+}
+
+function showReport(el, code, date) {
+  document.querySelectorAll('.report-item').forEach(e => e.classList.remove('active'));
+  el.classList.add('active');
+  const r = DATA.reports.find(x => String(x.code).padStart(6,'0') === String(code).padStart(6,'0'));
+  if (!r) {
+    document.getElementById('report-detail').innerHTML =
+      `<div class="report-empty"><div class="report-empty-icon">📭</div><div>找不到该简报记录（code=${code}）</div></div>`;
+    return;
+  }
+  const detail = document.getElementById('report-detail');
+  let md = r.markdown || r.summary || '（无简报内容）';
+  // 过滤工具调用日志行（以 [工具]/[GLM重试]/=== 开头的行）
+  md = md.split('\n')
+    .filter(line => {
+      const t = line.trim();
+      return !t.startsWith('[工具]') &&
+             !t.startsWith('[GLM重试]') &&
+             !t.startsWith('=== ') &&
+             !t.startsWith('数据已全部返回');
+    })
+    .join('\n')
+    .replace(/^[\s\n]+/, '');  // 去掉开头空行
+  detail.innerHTML = `<div class="md-body">${marked.parse(md)}</div>`;
+}
+
+function openReport(code) {
+  // 从任意页面跳转到简报页并展示该票
+  document.querySelectorAll('.nav-tab').forEach((t,i)=>{if(i===3)t.classList.add('active');else t.classList.remove('active')});
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.getElementById('page-reports').classList.add('active');
+
+  const r = DATA.reports.find(x=>x.code===code);
+  if (r) {
+    setTimeout(()=>{
+      const item = document.querySelector(`.report-item`);
+      // 找到对应的 item 并点击
+      const items = document.querySelectorAll('.report-item');
+      items.forEach(el => {
+        if (el.textContent.includes(code)) { el.click(); el.scrollIntoView({block:'nearest'}); }
+      });
+    }, 50);
+  } else {
+    document.getElementById('report-detail').innerHTML =
+      `<div class="report-empty"><div class="report-empty-icon">📭</div>
+       <div>该股票暂无简报</div>
+       <div style="margin-top:8px;font-size:12px;color:var(--muted);font-family:var(--mono)">python push_to_sheets.py --report ${code}</div>
+       </div>`;
+  }
+}
+
+// ══════════════════════════════════════════
+// 初始化
+// ══════════════════════════════════════════
+async function init() {
+  const d = loadData();
+  DATA.masterlist  = d.masterlist  || [];
+  DATA.traditional = d.traditional || [];
+  DATA.reports     = d.reports     || [];
+
+  document.getElementById('update-time').textContent =
+    d.generated || new Date().toLocaleDateString('zh-CN',{month:'short',day:'numeric'});
+
+  if (!DATA.masterlist.length) {
+    document.getElementById('ml-table-wrap').innerHTML =
+      '<div class="loading" style="color:#e53e3e">未找到数据 — 请确认 data.js 已与 index.html 一起部署<br><br>' +
+      '<code style="font-size:12px">python push_to_sheets.py --all</code><br>然后把 data.js + index.html 一起上传到 Cloudflare</div>';
+    return;
+  }
+
+  initMasterlist();
+  renderTraditional();
+  renderReportList();
+}
+
+init();
+</script>
+</body>
+</html>
