@@ -4,9 +4,11 @@ A股价值投资 Agent —— 步骤4c:神奇公式式打分(便宜50% + 质量5
 ================================================================
 相对 4b 的改动(依据用户取向:均衡/格林布拉特):
   · 综合分 = (便宜排名 + 质量排名)/2   ← 两支柱各半
-        便宜 = PB(升序);质量 = ROE_3y(降序)
+        便宜 = PB(升序);质量 = 去杠杆ROE [ROE×(1−负债率)] ≈ ROA(降序)
+        —— 用去杠杆ROE 而非原始ROE,避免靠高负债撑起的高ROE 被当真质量
+           (正邦重整虚高ROE 即此类);全市场层拿不到 ROIC,用负债率做杠杆代理。
   · CFQ(缩尾[-1,3])、负债率、红旗 = 风险叠加层,只惩罚/标记,不加分
-  · 排名只需 PB + ROE_3y(放宽 dropna),改善覆盖率
+  · 入选仍只需 PB>0 + 3年ROE>0(正盈利门槛);排序用去杠杆ROE,改善覆盖率
   · 新增覆盖率诊断:看掉票到底是缺PB、缺ROE还是拉取失败
 
 复用 4b 的缓存(sina_sector.csv / ths_quality_cache.csv),房地产秒出。
@@ -57,9 +59,17 @@ def add_flags(df):
 
 
 def magic_rank(df):
-    """神奇公式:便宜(PB)与质量(ROE_3y)各半。只需这两个数。"""
+    """神奇公式:便宜(PB)与质量各半。质量用『去杠杆ROE』(≈ROA)而非原始ROE,
+    避免靠高负债撑起的高ROE 被当真质量(参考正邦重整虚高ROE)。"""
     d = df.copy()
     d["CFQ_w"] = pd.to_numeric(d["CFQ_3y"], errors="coerce").clip(-1, 3)
+
+    # 去杠杆ROE:ROE × 权益占比 ≈ ROA = ROE×(1−负债率)。负债率缺失则不调整(×1)。
+    # 权益占比封底0.1:负债率>90%(含资不抵债)时仍保留10%权重,重罚但不归零。
+    roe = pd.to_numeric(d["ROE_3y"], errors="coerce")
+    debt = pd.to_numeric(d["负债率"], errors="coerce")
+    eq_w = (1 - debt / 100).clip(lower=0.1).where(debt.notna(), 1.0)
+    d["ROE_adj"] = (roe * eq_w).round(2)
 
     # 入选资格:PB>0 且 3年ROE>0(格林布拉特要求正盈利;负回报=困境,非便宜)
     rankable = d[(pd.to_numeric(d["pb"], errors="coerce") > 0) &
@@ -68,7 +78,7 @@ def magic_rank(df):
     rankable["样本数"] = n
     if n >= 2:
         rankable["便宜排名"] = rankable["pb"].rank(ascending=True)
-        rankable["质量排名"] = rankable["ROE_3y"].rank(ascending=False)
+        rankable["质量排名"] = rankable["ROE_adj"].rank(ascending=False)   # 用去杠杆ROE排序
         rankable["综合分"] = (rankable["便宜排名"] + rankable["质量排名"]) / 2
         rankable["排名可信度"] = "正常" if n >= MIN_GROUP else "低(样本<5)"
         rankable = rankable.sort_values("综合分")
@@ -143,7 +153,7 @@ def main():
         merged = target.merge(q, on="code", how="left")
         ranked = magic_rank(merged)
         coverage_report(merged)
-        cols = ["name", "pb", "ROE_3y", "便宜排名", "质量排名",
+        cols = ["name", "pb", "ROE_3y", "ROE_adj", "便宜排名", "质量排名",
                 "综合分", "CFQ_w", "负债率", "红旗"]
         cols = [c for c in cols if c in ranked.columns]
         print("\n=== 神奇公式排序(仅正盈利,综合分越小越好)===\n")

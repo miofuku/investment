@@ -181,13 +181,13 @@ def prepare_masterlist(path="factor_all_market_magic.csv", top_n=None):
 
     colmap = {
         "code": "code", "name": "name", "行业": "industry", "pb": "pb",
-        "ROE_3y": "roe_3y", "综合分": "score", "便宜排名": "cheap_rank",
+        "ROE_3y": "roe_3y", "ROE_adj": "roe_adj", "综合分": "score", "便宜排名": "cheap_rank",
         "质量排名": "quality_rank", "CFQ_w": "cfq", "负债率": "debt_ratio",
         "红旗": "flags", "排名可信度": "rank_confidence",
     }
     out = df[[c for c in colmap if c in df.columns]].rename(columns=colmap)
     # 数值列保留两位小数
-    for col in ["pb", "roe_3y", "score", "cfq", "debt_ratio"]:
+    for col in ["pb", "roe_3y", "roe_adj", "score", "cfq", "debt_ratio"]:
         if col in out.columns:
             out[col] = out[col].round(2)
     return out.where(pd.notna(out), None).to_dict("records")

@@ -56,7 +56,7 @@ def get_roic_3y(code):
 
     bs_by = {str(r["报告日"])[:10]: r for _, r in bs3.iterrows()}
     detail = []
-    nopat_sum, invested_list = 0.0, []
+    pairs = []   # 仅 invested>0 的年份的 (NOPAT, 投入资本),保证分子分母取同一组年份
     for _, r in il3.iterrows():
         period = str(r["报告日"])[:10]
         利润总额 = _num(r.get("利润总额"))
@@ -81,9 +81,8 @@ def get_roic_3y(code):
         cash = _z(_num(b.get("货币资金")))
         invested = int_debt + equity - cash
 
-        nopat_sum += nopat
         if invested and invested > 0:
-            invested_list.append(invested)
+            pairs.append((nopat, invested))
         # 单年ROIC仅供明细展示(可能因重整等失真),均值不取单年平均
         single = (nopat / invested * 100) if invested and invested > 0 else None
         detail.append({
@@ -92,12 +91,15 @@ def get_roic_3y(code):
             "单年ROIC_pct": round(single, 2) if single is not None else None,
         })
 
-    # 年均口径:平均NOPAT ÷ 平均投入资本(分子分母量纲一致,均为"一年")
-    # 注:不可用 Σ3年NOPAT÷平均投入资本——分子是三年之和、分母是一年,量纲不匹配会虚高约3倍
-    avg_invested = sum(invested_list) / len(invested_list) if invested_list else None
-    n = len(detail)
-    avg_nopat = nopat_sum / n if n else None
-    roic_3y = round(avg_nopat / avg_invested * 100, 2) if (avg_invested and avg_nopat is not None) else None
+    # 年均口径:平均NOPAT ÷ 平均投入资本(分子分母均为"一年",且取同一组 invested>0 的年份)
+    # 注1:不可用 Σ3年NOPAT÷平均投入资本——分子三年之和、分母一年,量纲不匹配会虚高约3倍
+    # 注2:分子分母必须用同一年份集合,否则混入 invested≤0 的年份(净现金等)会失真
+    if pairs:
+        avg_nopat = sum(p[0] for p in pairs) / len(pairs)
+        avg_invested = sum(p[1] for p in pairs) / len(pairs)
+        roic_3y = round(avg_nopat / avg_invested * 100, 2)
+    else:
+        roic_3y = None
 
     # 诚实护栏:单年ROIC波动极大→疑似重整/一次性项目污染EBIT,合计值也不可信
     singles = [d["单年ROIC_pct"] for d in detail if d["单年ROIC_pct"] is not None]
