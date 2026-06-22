@@ -154,6 +154,7 @@ python agent_step8_block_trade.py 601006    # 换成任意6位代码
 ./build_and_deploy.sh --all              # 刷母清单+候选+金融股 → 写 Sheets + data.js → 部署
 ./build_and_deploy.sh --report 600519    # 单只简报入库 → 更新 data.js → 部署(可跟多个代码)
 ./build_and_deploy.sh --process-requests # 处理用户提交的看票申请(§4.4)→ 部署
+./build_and_deploy.sh --daily            # 日常例程:处理看票申请 → 刷新 data.js → 部署(适合定时跑)
 ./build_and_deploy.sh --all --no-deploy  # 只本地生成,不部署(本地打开 index.html 预览)
 ```
 > ⚠️ `--all` 只读现成 CSV,**不重算因子**。要刷新底层数字,先按 §3「刷新母清单」跑 `step4c` 等,再 `--all`。
@@ -172,8 +173,10 @@ Pages 站点默认公开。用 **Cloudflare Access**(Zero Trust,免费 ≤50 人
 
 ### 4.6 日常节奏
 - **偶尔(重)**:刷底层数据 → `step4c` 等重算 CSV → `./build_and_deploy.sh --all`。
-- **日常(轻)**:`./build_and_deploy.sh --process-requests` 处理申请并发布。
+- **日常(轻)**:`./build_and_deploy.sh --daily` 处理看票申请、刷新 data.js 并发布(可挂到 cron / 定时任务每天跑)。
 - **用户**:打开 URL → 邮箱验证 → 看清单/散点/候选/简报,或提交想看的代码。
+
+> 申请失败的票会被标记为 `error`(而非 `done`),在 requests 表里可见;把该行改回 `pending` 即可下次 `--daily` 重试。
 
 ---
 

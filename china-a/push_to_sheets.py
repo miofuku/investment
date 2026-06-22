@@ -38,25 +38,8 @@ import gspread
 from gspread.exceptions import WorksheetNotFound
 
 
-def _load_dotenv():
-    """读取本脚本同目录 .env(KEY=VALUE)。已存在的环境变量优先,不覆盖。零依赖。"""
-    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
-    if not os.path.exists(path):
-        return
-    with open(path, encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            if line.startswith("export "):
-                line = line[len("export "):]
-            key, _, val = line.partition("=")
-            key, val = key.strip(), val.strip().strip('"').strip("'")
-            if key:
-                os.environ.setdefault(key, val)
-
-
-_load_dotenv()
+from _env import load_dotenv
+load_dotenv()
 
 
 def _clean_val(v):
@@ -264,21 +247,39 @@ def _lookup_name_industry(code):
     return None, None
 
 
-def prepare_report(code, name, industry, markdown):
-    """从 agent 简报 Markdown 抽摘要字段,组装成一条 reports 表记录。"""
-    # 从简报里抽几个关键数字(用于列表展示,不用解析 Markdown)
-    roe  = _extract(r"3年[平均]*ROE[^%\d]*([\d.]+)%?", markdown)
-    roic = _extract(r"3年[平均]*ROIC[^%\d]*([\d.]+)%?", markdown)
-    pb   = _extract(r"\bPB\b[^\d]*([\d.]+)", markdown)
+def prepare_report(code, name, industry, markdown, meta=None):
+    """组装一条 reports 表记录。数字与红旗优先用结构化 meta(来自 agent 工具的确定性返回),
+    meta 缺失时才退回从 Markdown 正则抽取(脆弱,仅兜底)。"""
+    meta = meta or {}
 
-    # 重大红旗判断
-    major_flags = []
-    if re.search(r"会计差错", markdown): major_flags.append("会计差错")
-    if re.search(r"立案|处罚", markdown): major_flags.append("监管处罚")
-    if re.search(r"问询函|关注函", markdown): major_flags.append("监管问询")
-    if re.search(r"ROIC.*可信.*false|失真警示", markdown): major_flags.append("ROIC失真")
-    if re.search(r"净减持", markdown): major_flags.append("产业资本净减持")
-    if re.search(r"大幅折价.*笔数.*[1-9]", markdown): major_flags.append("大宗折价")
+    def _n(v):
+        try:
+            return round(float(v), 2)
+        except (TypeError, ValueError):
+            return None
+
+    # 数字:meta 优先,缺失再正则
+    roe = _n(meta.get("roe_3y"))
+    if roe is None:
+        roe = _n(_extract(r"3年[平均]*ROE[^%\d]*([\d.]+)%?", markdown))
+    roic = _n(meta.get("roic_3y"))
+    if roic is None:
+        roic = _n(_extract(r"3年[平均]*ROIC[^%\d]*([\d.]+)%?", markdown))
+    pb = _n(meta.get("pb"))
+    if pb is None:
+        pb = _n(_extract(r"\bPB\b[^\d]*([\d.]+)", markdown))
+
+    # 重大红旗:meta 优先(由工具返回确定性判定),缺失再正则
+    if meta.get("major_flags"):
+        major_flags = list(dict.fromkeys(meta["major_flags"]))
+    else:
+        major_flags = []
+        if re.search(r"会计差错", markdown): major_flags.append("会计差错")
+        if re.search(r"立案|处罚", markdown): major_flags.append("监管处罚")
+        if re.search(r"问询函|关注函", markdown): major_flags.append("监管问询")
+        if re.search(r"ROIC.*可信.*false|失真警示", markdown): major_flags.append("ROIC失真")
+        if re.search(r"净减持", markdown): major_flags.append("产业资本净减持")
+        if re.search(r"大幅折价.*笔数.*[1-9]", markdown): major_flags.append("大宗折价")
 
     # 深层解读摘要(前400字)
     summary = ""
@@ -291,9 +292,9 @@ def prepare_report(code, name, industry, markdown):
         "name": name,
         "industry": industry,
         "date": TODAY,
-        "roe_3y": round(float(roe), 2) if roe else None,
-        "roic_3y": round(float(roic), 2) if roic else None,
-        "pb": round(float(pb), 2) if pb else None,
+        "roe_3y": roe,
+        "roic_3y": roic,
+        "pb": pb,
         "major_flags": ", ".join(major_flags) if major_flags else "",
         "summary": summary,
         "markdown": markdown,
@@ -382,9 +383,10 @@ def push_all(dryrun=False, top_n=None):
     print("\n完成。把 data.js 和 index.html 一起部署到 Cloudflare Pages。")
 
 
-def push_report(code, dryrun=False):
-    """对单只票生成 agent 简报并写入 reports Sheet。"""
-    import subprocess, tempfile
+def push_report(code, dryrun=False, rebuild=True):
+    """对单只票生成 agent 简报并写入 reports Sheet。成功返回 True,失败返回 False。
+    rebuild=False:不在此处重建 data.js(批量处理时由调用方最后统一重建一次)。"""
+    import subprocess
     print(f"=== push_report {code} {'[DRYRUN]' if dryrun else ''} ===")
 
     # 调 agent 生成简报(复用现有脚本)
@@ -399,7 +401,16 @@ def push_report(code, dryrun=False):
     if result.returncode != 0:
         print(f"  [ERROR] agent_step8 退出码 {result.returncode}")
         print(f"  完整 stderr:\n{result.stderr}")
-        return
+        return False
+
+    # 结构化 META(agent_step8 末尾打印 <<<META>>>{json}<<<END_META>>>),优先于正则
+    meta = {}
+    mm = re.search(r"<<<META>>>(.*?)<<<END_META>>>", output, re.S)
+    if mm:
+        try:
+            meta = json.loads(mm.group(1).strip())
+        except Exception as e:
+            print(f"  [WARN] META 解析失败,退回正则: {e}")
 
     # 过滤掉工具调用日志行，只保留简报正文
     clean_lines = [
@@ -407,6 +418,7 @@ def push_report(code, dryrun=False):
         if not l.strip().startswith('[工具]')
         and not l.strip().startswith('[GLM重试]')
         and not l.strip().startswith('=== ')
+        and not l.strip().startswith('<<<META>>>')
         and l.strip() != '数据已全部返回，下面生成完整简报。'
     ]
     markdown = '\n'.join(clean_lines).strip()
@@ -415,30 +427,40 @@ def push_report(code, dryrun=False):
     md_match = re.search(r"===\s*完整简报.*?===\n+([\s\S]+)", output)
     if md_match:
         markdown = md_match.group(1).strip()
+    if mm:                                  # 防御:剔除可能混入正文的 META 块
+        markdown = markdown.replace(mm.group(0), "").strip()
 
     if not markdown:
         print("  [ERROR] 未能从 agent 输出中提取简报,请检查 agent_step8 输出")
         print("  stderr:", result.stderr[:300])
-        return
+        return False
 
-    # name/industry:优先从本地缓存按代码回查(可靠);缓存缺失再退回从简报正则抽取
-    name, industry = _lookup_name_industry(code)
+    # name/industry:META → 本地缓存回查 → 正则 → code
+    name = (meta.get("name") or "").strip() or None
+    industry = meta.get("industry")
+    industry = str(industry).strip() if industry is not None else None
+    if not name or industry is None:
+        ln, li = _lookup_name_industry(code)
+        name = name or ln
+        if industry is None:
+            industry = li
     if not name:
         name = _extract(r"公司[名称全称简称]*[^\w]+([\w\s（）]+)", markdown) or code
     if industry is None:
         industry = _extract(r"所属行业[^\w]+([\w、和及]+)", markdown) or ""
 
-    rec = prepare_report(code, name.strip(), industry.strip(), markdown)
+    rec = prepare_report(code, str(name).strip(), str(industry).strip(), markdown, meta=meta)
     print(f"  抽取: ROE={rec['roe_3y']} ROIC={rec['roic_3y']} PB={rec['pb']}"
-          f" 重大红旗={rec['major_flags'] or '无'}")
+          f" 重大红旗={rec['major_flags'] or '无'}  (来源:{'META' if meta else '正则'})")
 
     upsert_sheet(SH["reports"], [rec],
                  key_cols=("code", "date"),
                  dryrun=dryrun)
     if not dryrun:
         print(f"  ✓ {code} 简报已入库 reports Sheet(date={TODAY})")
-        # 重新生成 data.js(含最新简报)
-        _rebuild_data_js()
+        if rebuild:                          # 批量处理时跳过,末尾统一重建
+            _rebuild_data_js()
+    return True
 
 
 def _read_reports_from_sheets():
@@ -525,9 +547,16 @@ def process_requests(dryrun=False):
             continue
         print(f"  → 生成简报 {code} ...")
         if not dryrun:
-            push_report(code, dryrun=False)             # 写 reports 表 + 重建 data.js
-            ws.update_cell(rownum, status_col, "done")
-        done.append(code)
+            ok = push_report(code, dryrun=False, rebuild=False)   # 批量:暂不重建 data.js
+            ws.update_cell(rownum, status_col, "done" if ok else "error")
+            if ok:
+                done.append(code)
+            else:
+                print(f"  [{code}] 生成失败 → 标记 error(把该行改回 pending 可重试)")
+        else:
+            done.append(code)
+    if not dryrun and done:
+        _rebuild_data_js()                  # 批量结束后统一重建一次 data.js
     print(f"  完成 {len(done)} 条:{done or '无'}")
     return done
 

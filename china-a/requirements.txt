@@ -1,0 +1,8 @@
+# A股模块依赖(Python 3.10+)。装:pip install -r requirements.txt
+# 版本为当前验证可用版本;>= 允许小版本升级,如遇接口漂移可改为 == 锁死。
+openai>=2.8.1          # GLM(OpenAI 兼容)client
+akshare>=1.18.64       # 免费行情/财报数据源(新浪/巨潮/同花顺/交易所)
+pandas>=2.3.3
+numpy>=2.2.6
+gspread>=6.2.1         # 仅发布到 Google Sheets 时需要
+pytest>=8.0            # 跑 tests/(确定性逻辑回归)

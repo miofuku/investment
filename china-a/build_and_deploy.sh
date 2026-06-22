@@ -13,6 +13,7 @@
 #   ./build_and_deploy.sh --report 600519      # 生成单只简报、入库、更新 data.js 并部署
 #   ./build_and_deploy.sh --report 600519 601006 600938   # 批量简报
 #   ./build_and_deploy.sh --process-requests   # 处理用户提交的看票申请(requests 表)、入库并部署
+#   ./build_and_deploy.sh --daily              # 日常例程:处理看票申请 → 刷新 data.js → 部署(适合定时跑)
 #   ./build_and_deploy.sh --all --no-deploy    # 只本地生成,不部署(本地预览用)
 #   ./build_and_deploy.sh --datajs             # 仅重建 data.js(不重算因子)并部署
 #
@@ -29,17 +30,30 @@ PYTHON="${PYTHON:-python3}"
 
 cd "$(dirname "$0")"
 
-# 解析参数:抽出 --no-deploy,其余原样透传给 push_to_sheets.py
+# 解析参数:抽出 --no-deploy / --daily,其余原样透传给 push_to_sheets.py
 DEPLOY=1
+DAILY=0
 ARGS=()
 for a in "$@"; do
-  if [[ "$a" == "--no-deploy" ]]; then DEPLOY=0; else ARGS+=("$a"); fi
+  case "$a" in
+    --no-deploy) DEPLOY=0 ;;
+    --daily)     DAILY=1 ;;
+    *)           ARGS+=("$a") ;;
+  esac
 done
-# 不带业务参数时,默认刷新全部
-if [[ ${#ARGS[@]} -eq 0 ]]; then ARGS=(--all); fi
 
-echo "==> [1/2] 本地生成(写 Google Sheets + data.js):push_to_sheets.py ${ARGS[*]}"
-"$PYTHON" push_to_sheets.py "${ARGS[@]}"
+if [[ "$DAILY" -eq 1 ]]; then
+  # 日常例程:处理看票申请,然后无论是否有新申请都从 Sheets 刷新一遍 data.js,保证发布态一致
+  echo "==> [1/2] 日常例程:处理看票申请"
+  "$PYTHON" push_to_sheets.py --process-requests
+  echo "==> [1/2] 刷新 data.js(同步 Sheets 最新简报)"
+  "$PYTHON" push_to_sheets.py --datajs
+else
+  # 不带业务参数时,默认刷新全部
+  if [[ ${#ARGS[@]} -eq 0 ]]; then ARGS=(--all); fi
+  echo "==> [1/2] 本地生成(写 Google Sheets + data.js):push_to_sheets.py ${ARGS[*]}"
+  "$PYTHON" push_to_sheets.py "${ARGS[@]}"
+fi
 
 if [[ ! -f data.js ]]; then
   echo "✗ 未找到 data.js,生成失败,终止部署。" >&2

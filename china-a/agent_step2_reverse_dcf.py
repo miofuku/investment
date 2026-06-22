@@ -101,6 +101,34 @@ def _market_cap_yuan(code):
     return float(hit.iloc[0]["mktcap"]) * 1e4          # 万元 → 元
 
 
+def _net_debt_yuan(code):
+    """近一年净有息负债 = 有息负债(短期借款+长期借款+应付债券+一年内到期非流动负债)
+    − 货币资金,单位元。净现金公司为负。取数失败/无年报返回 None。
+    用于把反向DCF的 EV 从『≈总市值』修正为『总市值 + 净有息负债』(FCFF 应对 EV 而非股权)。"""
+    code = str(code).zfill(6)
+    try:
+        bs = ak.stock_financial_report_sina(stock=_sina_code(code), symbol="资产负债表")
+    except Exception:
+        return None
+    period_col = "报告日" if "报告日" in bs.columns else bs.columns[0]
+    d = bs.copy()
+    d["_p"] = d[period_col].astype(str).str.replace(r"\D", "", regex=True)
+    d = d[d["_p"].str.endswith("1231")]
+    if d.empty:
+        return None
+    d["_p"] = pd.to_numeric(d["_p"], errors="coerce")
+    latest = d.sort_values("_p").iloc[-1]
+
+    def _g(col):
+        if col not in d.columns:
+            return 0.0
+        v = _num(latest[col])
+        return 0.0 if pd.isna(v) else v
+
+    int_debt = sum(_g(k) for k in ["短期借款", "长期借款", "应付债券", "一年内到期的非流动负债"])
+    return int_debt - _g("货币资金")
+
+
 def _dcf_ev(fcf0, g, r, gp, N):
     pv = sum(fcf0 * (1 + g) ** t / (1 + r) ** t for t in range(1, N + 1))
     fcf_N = fcf0 * (1 + g) ** N
@@ -129,23 +157,31 @@ def reverse_dcf(code, r=0.09, g_perp=0.03, years=10):
     mc = _market_cap_yuan(code)
     if mc is None:
         return {"error": "无总市值(请先生成 sina_sector.csv)"}
+    # EV = 总市值 + 净有息负债(FCFF 应折现到企业价值,而非股权市值)。
+    # 净现金公司净有息负债为负 → EV<市值 → 隐含增速略下修;取数失败则回退 EV≈市值。
+    net_debt = _net_debt_yuan(code)
+    ev = mc + net_debt if net_debt is not None else mc
+    ev_basis = "总市值+净有息负债" if net_debt is not None else "总市值(净有息负债取数失败,回退)"
     if r <= g_perp:
         return {"error": "折现率 r 必须大于永续增长率 g_perp"}
     if fcf0 <= 0:
         return _clean({"note": "近3年平均自由现金流为负,反向DCF不适用(公司净烧现金,无法反推增速)",
-                       "fcf_3y_avg_yuan": fcf0, "总市值_yuan": mc})
+                       "fcf_3y_avg_yuan": fcf0, "总市值_yuan": mc,
+                       "净有息负债_yuan": net_debt, "EV_yuan": ev})
 
-    f = lambda g: _dcf_ev(fcf0, g, r, g_perp, years) - mc
+    f = lambda g: _dcf_ev(fcf0, g, r, g_perp, years) - ev
     lo, hi = -0.90, 2.00
     if f(lo) > 0:
         return _clean({"implied_growth": None,
-                       "note": "即使增速为-90%,模型估值仍高于市值→市场隐含预期极低/可能低估",
-                       "fcf_3y_avg_yuan": fcf0, "总市值_yuan": mc,
+                       "note": "即使增速为-90%,模型估值仍高于EV→市场隐含预期极低/可能低估",
+                       "fcf_3y_avg_yuan": fcf0, "EV_yuan": ev,
+                       "总市值_yuan": mc, "净有息负债_yuan": net_debt,
                        "参数": {"r": r, "g_perp": g_perp, "years": years}})
     if f(hi) < 0:
         return _clean({"implied_growth": None,
-                       "note": "增速达200%仍撑不起当前市值→市场隐含预期极端乐观/可能高估",
-                       "fcf_3y_avg_yuan": fcf0, "总市值_yuan": mc,
+                       "note": "增速达200%仍撑不起当前EV→市场隐含预期极端乐观/可能高估",
+                       "fcf_3y_avg_yuan": fcf0, "EV_yuan": ev,
+                       "总市值_yuan": mc, "净有息负债_yuan": net_debt,
                        "参数": {"r": r, "g_perp": g_perp, "years": years}})
     for _ in range(100):                                # 二分求隐含增速
         mid = (lo + hi) / 2
@@ -159,9 +195,11 @@ def reverse_dcf(code, r=0.09, g_perp=0.03, years=10):
         "implied_growth": round(g_impl, 4),
         "implied_growth_pct": f"{g_impl*100:.1f}%",
         "fcf_3y_avg_yuan": fcf0,
-        "EV近似_总市值_yuan": mc,
+        "EV_yuan": ev,
+        "总市值_yuan": mc,
+        "净有息负债_yuan": net_debt,
         "参数": {"折现率r": r, "永续增长g_perp": g_perp, "高增长年数N": years},
-        "口径说明": "EV原型期≈总市值(未减净现金);FCF为近3年均值",
+        "口径说明": f"EV={ev_basis};FCFF=近3年均值(经营现金流−资本开支)",
     })
 
 
