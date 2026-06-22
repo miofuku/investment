@@ -1,6 +1,5 @@
 .env
 *.json
 *.csv
-# 生成产物(由 push_to_sheets.py 从 CSV 构建),经 wrangler 直传部署,不进 git
 data.js
 __pycache__/
