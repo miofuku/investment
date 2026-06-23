@@ -304,14 +304,42 @@ def prepare_report(code, name, industry, markdown, meta=None):
 # ================================================================
 # 金融股备查
 # ================================================================
-def prepare_financials(path="factor_financials.csv"):
-    if not os.path.exists(path):
+def prepare_financials(path="factor_financials.csv",
+                       universe_path="universe_financials.csv",
+                       sector_path="sina_sector.csv"):
+    """金融股备查清单。合并两路来源:
+      1) factor_financials.csv —— step4c 按行业分流的金融股(可能含市净率/净资产收益率);
+      2) universe_financials.csv —— step1 按名称隔离的银行/券商/保险(否则银行根本不在数据里),
+         市净率从行情快照缓存 sina_sector.csv 补;这些票未算因子,净资产收益率留空。"""
+    frames = []
+
+    if os.path.exists(path):
+        df = pd.read_csv(path, dtype={"code": str})
+        df["code"] = df["code"].str.zfill(6)
+        colmap = {"code": "code", "name": "name", "行业": "industry",
+                  "pb": "pb", "ROE_3y": "roe_3y"}
+        frames.append(df[[c for c in colmap if c in df.columns]].rename(columns=colmap))
+
+    if os.path.exists(universe_path):
+        u = pd.read_csv(universe_path, dtype={"code": str})
+        u["code"] = u["code"].str.zfill(6)
+        u = u.rename(columns={"sector": "industry"})
+        if os.path.exists(sector_path):                 # 补市净率
+            sec = pd.read_csv(sector_path, dtype={"code": str})
+            sec["code"] = sec["code"].str.zfill(6)
+            u = u.merge(sec[["code", "pb"]], on="code", how="left")
+        keep = [c for c in ["code", "name", "industry", "pb"] if c in u.columns]
+        ub = u[keep].copy()
+        ub["roe_3y"] = None                              # 银行等未算因子,净资产收益率留空
+        frames.append(ub)
+
+    if not frames:
         return []
-    df = pd.read_csv(path, dtype={"code": str})
-    df["code"] = df["code"].str.zfill(6)
-    colmap = {"code": "code", "name": "name", "行业": "industry",
-              "pb": "pb", "ROE_3y": "roe_3y"}
-    out = df[[c for c in colmap if c in df.columns]].rename(columns=colmap)
+    # factor_financials 在前 → 同代码优先保留其(可能带净资产收益率)
+    out = pd.concat(frames, ignore_index=True).drop_duplicates(subset="code", keep="first")
+    for col in ["pb", "roe_3y"]:
+        if col in out.columns:
+            out[col] = pd.to_numeric(out[col], errors="coerce").round(2)
     return out.where(pd.notna(out), None).to_dict("records")
 
 
