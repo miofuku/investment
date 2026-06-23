@@ -42,6 +42,7 @@
 | `a_share_universe.py` | 洗池子:全A股→剔ST/次新/银行,产 `universe_normal.csv` / `universe_financials.csv` |
 | `step4b_market_factors.py` | **数据函数库**,被 step4c 和所有 agent import(删了全盘崩) |
 | `step4c_magic_formula.py` | 全市场行业内神奇公式打分,产母清单;含金融股隔离 |
+| `bank_scorecard.py` | 金融股备查评分卡:为隔离出的银行/券商/保险补适用指标(净资产收益率3年均值/总资产净利率/资产负债率/利润增速),产 `bank_scorecard.csv`。不良率/拨备/资本充足率/净息差 akshare 免费源取不到,不收录 |
 | `check_masterlist.py` | 母清单体检:抽出榜首/带红旗/超低PB等可疑票供人工核 |
 | `screen_traditional.py` | 传统行业选股:A偏便宜 / B偏稳健 / 交集,生成深挖命令 |
 
@@ -75,6 +76,7 @@
 | `factor_all_market_magic.csv` | **母清单**(选票入口,~3533只正盈利) |
 | `factor_all_market_magic_excluded.csv` | 负盈利回避区(~1243只) |
 | `factor_financials.csv` | 分流的金融股(口径不适用) |
+| `bank_scorecard.csv` | 金融股备查评分卡(看板「金融股(备查)」页数据源) |
 | `factor_trad_value.csv` / `factor_trad_stable.csv` | 传统行业 A/B 候选 |
 
 ### 2.5 可删(一次性探针 + 旧版本)
@@ -155,6 +157,7 @@ python agent_step8_block_trade.py 601006    # 换成任意6位代码
 ./build_and_deploy.sh --report 600519    # 单只简报入库 → 更新 data.js → 部署(可跟多个代码)
 ./build_and_deploy.sh --process-requests # 处理用户提交的看票申请(§4.4)→ 部署
 ./build_and_deploy.sh --daily            # 日常例程:处理看票申请 → 刷新 data.js → 部署(适合定时跑)
+./build_and_deploy.sh --banks            # 刷新金融股评分卡(净资产收益率/ROA等,季度级)→ 重建 data.js → 部署
 ./build_and_deploy.sh --all --no-deploy  # 只本地生成,不部署(本地打开 index.html 预览)
 ```
 > ⚠️ `--all` 只读现成 CSV,**不重算因子**。要刷新底层数字,先按 §3「刷新母清单」跑 `step4c` 等,再 `--all`。

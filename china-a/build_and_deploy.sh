@@ -14,6 +14,7 @@
 #   ./build_and_deploy.sh --report 600519 601006 600938   # 批量简报
 #   ./build_and_deploy.sh --process-requests   # 处理用户提交的看票申请(requests 表)、入库并部署
 #   ./build_and_deploy.sh --daily              # 日常例程:处理看票申请 → 刷新 data.js → 部署(适合定时跑)
+#   ./build_and_deploy.sh --banks              # 刷新金融股评分卡(净资产收益率/ROA等,季度级)→ 重建 data.js 并部署
 #   ./build_and_deploy.sh --all --no-deploy    # 只本地生成,不部署(本地预览用)
 #   ./build_and_deploy.sh --datajs             # 仅重建 data.js(不重算因子)并部署
 #
@@ -33,16 +34,24 @@ cd "$(dirname "$0")"
 # 解析参数:抽出 --no-deploy / --daily,其余原样透传给 push_to_sheets.py
 DEPLOY=1
 DAILY=0
+BANKS=0
 ARGS=()
 for a in "$@"; do
   case "$a" in
     --no-deploy) DEPLOY=0 ;;
     --daily)     DAILY=1 ;;
+    --banks)     BANKS=1 ;;
     *)           ARGS+=("$a") ;;
   esac
 done
 
-if [[ "$DAILY" -eq 1 ]]; then
+if [[ "$BANKS" -eq 1 ]]; then
+  # 金融股评分卡:季度级数据,单独刷新后重建 data.js(不重算其它因子)
+  echo "==> [1/2] 刷新金融股评分卡:bank_scorecard.py(约几分钟)"
+  "$PYTHON" bank_scorecard.py
+  echo "==> [1/2] 重建 data.js(并入评分卡)"
+  "$PYTHON" push_to_sheets.py --datajs
+elif [[ "$DAILY" -eq 1 ]]; then
   # 日常例程:处理看票申请,然后无论是否有新申请都从 Sheets 刷新一遍 data.js,保证发布态一致
   echo "==> [1/2] 日常例程:处理看票申请"
   "$PYTHON" push_to_sheets.py --process-requests

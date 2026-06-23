@@ -306,11 +306,14 @@ def prepare_report(code, name, industry, markdown, meta=None):
 # ================================================================
 def prepare_financials(path="factor_financials.csv",
                        universe_path="universe_financials.csv",
-                       sector_path="sina_sector.csv"):
-    """金融股备查清单。合并两路来源:
+                       sector_path="sina_sector.csv",
+                       scorecard_path="bank_scorecard.csv"):
+    """金融股备查清单。合并三路来源:
       1) factor_financials.csv —— step4c 按行业分流的金融股(可能含市净率/净资产收益率);
       2) universe_financials.csv —— step1 按名称隔离的银行/券商/保险(否则银行根本不在数据里),
-         市净率从行情快照缓存 sina_sector.csv 补;这些票未算因子,净资产收益率留空。"""
+         市净率从行情快照缓存 sina_sector.csv 补;这些票未算因子;
+      3) bank_scorecard.csv —— bank_scorecard.py 为金融股补的适用指标
+         (净资产收益率3年均值/ROA/资产负债率/利润增速),按 code 覆盖填入。"""
     frames = []
 
     if os.path.exists(path):
@@ -330,14 +333,28 @@ def prepare_financials(path="factor_financials.csv",
             u = u.merge(sec[["code", "pb"]], on="code", how="left")
         keep = [c for c in ["code", "name", "industry", "pb"] if c in u.columns]
         ub = u[keep].copy()
-        ub["roe_3y"] = None                              # 银行等未算因子,净资产收益率留空
+        ub["roe_3y"] = None                              # 占位,下面用评分卡覆盖
         frames.append(ub)
 
     if not frames:
         return []
     # factor_financials 在前 → 同代码优先保留其(可能带净资产收益率)
     out = pd.concat(frames, ignore_index=True).drop_duplicates(subset="code", keep="first")
-    for col in ["pb", "roe_3y"]:
+
+    # 用评分卡覆盖/补全金融股指标(净资产收益率/ROA/负债率/增速)
+    for col in ["roa", "debt_ratio", "profit_growth"]:
+        out[col] = None
+    if os.path.exists(scorecard_path):
+        sc = pd.read_csv(scorecard_path, dtype={"code": str})
+        sc["code"] = sc["code"].str.zfill(6)
+        sc = sc.set_index("code")
+        for col in ["roe_3y", "roa", "debt_ratio", "profit_growth"]:
+            if col in sc.columns:
+                mapped = out["code"].map(sc[col])
+                # roe_3y:评分卡优先,缺失时保留原 factor 值;其余列直接取评分卡
+                out[col] = mapped.where(mapped.notna(), out[col]) if col == "roe_3y" else mapped
+
+    for col in ["pb", "roe_3y", "roa", "debt_ratio", "profit_growth"]:
         if col in out.columns:
             out[col] = pd.to_numeric(out[col], errors="coerce").round(2)
     return out.where(pd.notna(out), None).to_dict("records")

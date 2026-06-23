@@ -249,8 +249,8 @@ td.num{text-align:right}
 <div class="page" id="page-financials">
   <div style="margin-bottom:14px;padding:12px 16px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;font-size:13px;color:var(--muted);line-height:1.6">
     金融股<strong style="color:var(--text)">不参与神奇公式打分</strong>:现金流、资产负债率、投入资本回报率、反向现金流折现 口径对金融业不适用(负债=存款是原料而非杠杆)。
-    下表为金融股<strong style="color:var(--text)">备查清单</strong>,仅列市净率与三年净资产收益率;银行多无三年净资产收益率(未计算因子)。
-    评估银行需用专属框架(市净率·净资产收益率·不良率·拨备覆盖率·资本充足率·净息差)单独取数。
+    下表为金融股<strong style="color:var(--text)">备查清单</strong>,列适用于金融业的指标:市净率、三年净资产收益率、总资产净利率(银行口径ROA)、资产负债率、净利润增速。
+    <strong style="color:var(--text)">不良率·拨备覆盖率·资本充足率·净息差</strong> 不在免费数据源内,暂未收录,如需评估银行请另查年报。
   </div>
   <div class="toolbar">
     <input type="text" id="fin-search" placeholder="搜索代码 / 名称…" oninput="renderFinancials()">
@@ -791,15 +791,21 @@ function renderFinancials() {
   });
 
   let html = '<table><thead><tr>'
-    + '<th>代码</th><th>名称</th><th>行业</th><th>市净率</th><th>三年净资产收益率</th>'
+    + '<th>代码</th><th>名称</th><th>行业</th><th>市净率</th>'
+    + '<th>三年净资产收益率</th><th>总资产净利率</th><th>资产负债率</th><th>净利润增速</th>'
     + '</tr></thead><tbody>';
   sorted.forEach(r => {
+    const g = num(r.profit_growth);
+    const gColor = g===null ? '' : g<0 ? 'color:#c0392b' : 'color:#00805c';
     html += `<tr>
       <td class="code">${r.code||'—'}</td>
       <td class="name">${r.name||'—'}</td>
       <td style="color:var(--muted);font-size:12px">${r.industry||'—'}</td>
       <td class="num">${fmt(r.pb)}</td>
       <td class="num">${fmtPct(r.roe_3y)}</td>
+      <td class="num">${fmtPct(r.roa)}</td>
+      <td class="num">${fmtPct(r.debt_ratio)}</td>
+      <td class="num" style="${gColor}">${fmtPct(r.profit_growth)}</td>
     </tr>`;
   });
   html += '</tbody></table>';
