@@ -486,11 +486,21 @@ function drawScatter() {
   ctx.strokeStyle = '#dde2ec'; ctx.lineWidth = 1;
   const roeVals = rows.map(r=>num(r.roe_3y)).filter(v=>v!==null);
   const pbVals  = rows.map(r=>num(r.pb)).filter(v=>v!==null);
-  const roeMin = Math.min(0,...roeVals), roeMax = Math.max(25,...roeVals);
+  // y 轴上限取 95 分位(向上取整到 5 的倍数),避免个别极端净资产收益率(如 838%)把全部点压到底部
+  const pct = (arr, p) => {
+    if (!arr.length) return 0;
+    const s = [...arr].sort((a,b)=>a-b);
+    return s[Math.min(s.length-1, Math.floor(p*(s.length-1)))];
+  };
+  const roeP95 = pct(roeVals, 0.95);
+  const roeMin = Math.min(0,...roeVals);
+  const roeMax = Math.max(25, Math.ceil(roeP95/5)*5);
+
   const pbMin = 0, pbMaxActual = Math.min(pbMax, Math.max(...pbVals,2));
 
   const sx = v => pad.l + (v-pbMin)/(pbMaxActual-pbMin)*pw;
-  const sy = v => pad.t + ph - (v-roeMin)/(roeMax-roeMin)*ph;
+  // 超出上限的点夹到顶部(后面用小三角标记其为离群高值)
+  const sy = v => pad.t + ph - (Math.min(Math.max(v,roeMin),roeMax)-roeMin)/(roeMax-roeMin)*ph;
 
   for (let i=0;i<=5;i++) {
     const x = pad.l + i/5*pw;
@@ -539,6 +549,17 @@ function drawScatter() {
     ctx.strokeStyle = color;
     ctx.lineWidth = 1;
     ctx.stroke();
+
+    // 净资产收益率高于坐标轴上限:点夹在顶部,加一个向上小三角提示「实际更高」
+    if (roe > roeMax) {
+      ctx.beginPath();
+      ctx.moveTo(x, y-radius-5);
+      ctx.lineTo(x-3.5, y-radius-1);
+      ctx.lineTo(x+3.5, y-radius-1);
+      ctx.closePath();
+      ctx.fillStyle = color;
+      ctx.fill();
+    }
 
     scatterData.push({x,y,r:radius+2,data:r});
   });
