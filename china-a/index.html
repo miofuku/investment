@@ -28,7 +28,8 @@
 body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:14px;min-height:100vh}
 
 /* ── NAV ── */
-nav{display:flex;align-items:center;gap:0;border-bottom:1px solid var(--border);background:var(--bg2);position:sticky;top:0;z-index:100}
+nav{display:flex;align-items:center;gap:0;border-bottom:1px solid var(--border);background:var(--bg2);position:sticky;top:0;z-index:100;overflow-x:auto;-webkit-overflow-scrolling:touch}
+nav::-webkit-scrollbar{display:none}
 .nav-brand{font-family:var(--mono);font-size:13px;color:var(--accent);padding:0 24px;border-right:1px solid var(--border);height:48px;display:flex;align-items:center;letter-spacing:.05em;white-space:nowrap}
 .nav-tabs{display:flex;height:48px}
 .nav-tab{padding:0 20px;height:100%;display:flex;align-items:center;cursor:pointer;color:var(--muted);font-size:13px;font-weight:500;border-bottom:2px solid transparent;transition:all .15s;white-space:nowrap;background:none;border-top:none;border-left:none;border-right:none}
@@ -137,6 +138,24 @@ td.num{text-align:right}
 .md-body ul,.md-body ol{padding-left:20px;margin-bottom:10px;line-height:1.8;color:var(--text)}
 .md-body hr{border:none;border-top:1px solid var(--border);margin:20px 0}
 .md-body li{margin-bottom:2px}
+
+/* ── 移动端适配(手机) ── */
+@media(max-width:640px){
+  .nav-brand{padding:0 12px;font-size:11px}
+  .nav-tab{padding:0 13px;font-size:12px}
+  .nav-right{display:none}                       /* 时间戳省略,腾出横向空间 */
+  .page{padding:14px 12px}
+  .toolbar{gap:8px}
+  .toolbar input{width:100%}                      /* 搜索框占满一行 */
+  .stat-bar{margin-left:0;width:100%;gap:18px;justify-content:flex-start}
+  .stat{text-align:left}
+  /* 简报页:桌面是左列表+右正文,手机改为上下堆叠 */
+  .report-grid{grid-template-columns:1fr;height:auto;min-height:calc(100vh - 200px)}
+  .report-list{max-height:40vh;border-right:none;border-bottom:1px solid var(--border)}
+  .report-detail{padding:20px 16px}
+  #req-code,#req-note{width:100%}
+  .request-bar{gap:8px}
+}
 
 /* ── LOADING ── */
 .loading{text-align:center;padding:60px;color:var(--muted)}
