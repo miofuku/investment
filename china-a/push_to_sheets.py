@@ -150,6 +150,24 @@ def upsert_sheet(sheet_name, records, key_cols=("code",), dryrun=False):
 # ================================================================
 # 数据准备:母清单
 # ================================================================
+def _load_preann(path="earnings_preann.csv"):
+    """业绩预告 → {code: {...}}。由 earnings_preann.py 生成,补前瞻盲点。"""
+    if not os.path.exists(path):
+        return {}
+    df = pd.read_csv(path, dtype={"code": str})
+    df["code"] = df["code"].str.zfill(6)
+    out = {}
+    for r in df.to_dict("records"):
+        out[r["code"]] = {
+            "type": r.get("ptype"),
+            "dir": r.get("direction"),
+            "pct": (round(float(r["pct"]), 1)
+                    if pd.notna(r.get("pct")) else None),
+            "date": r.get("pdate"),
+        }
+    return out
+
+
 def prepare_masterlist(path="factor_all_market_magic.csv", top_n=None):
     """
     top_n=None → 全量(~3500行,Sheets完全支持)
@@ -173,7 +191,21 @@ def prepare_masterlist(path="factor_all_market_magic.csv", top_n=None):
     for col in ["pb", "roe_3y", "roe_adj", "score", "cfq", "debt_ratio"]:
         if col in out.columns:
             out[col] = out[col].round(2)
-    return out.where(pd.notna(out), None).to_dict("records")
+    recs = out.where(pd.notna(out), None).to_dict("records")
+
+    # 合并业绩预告:neg 并入前瞻红旗 flags,全部附 preann_* 字段
+    preann = _load_preann()
+    for r in recs:
+        pa = preann.get(r["code"])
+        if not pa:
+            continue
+        r["preann_type"] = pa["type"]
+        r["preann_dir"] = pa["dir"]
+        r["preann_pct"] = pa["pct"]
+        if pa["dir"] == "neg":                       # 前瞻红旗:并入 flags
+            token = "业绩" + str(pa["type"])         # 业绩首亏/业绩预减/业绩续亏/业绩略减
+            r["flags"] = (str(r["flags"]) + "," + token) if r.get("flags") else token
+    return recs
 
 
 # ================================================================

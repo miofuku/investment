@@ -78,6 +78,7 @@ td.num{text-align:right}
 .badge-yellow{background:rgba(217,119,6,.14);color:#b45309}
 .badge-green{background:rgba(0,168,120,.14);color:#00805c}
 .badge-blue{background:rgba(0,112,243,.12);color:#0058c0}
+.badge-muted{background:rgba(120,130,150,.12);color:var(--muted)}
 .badge-gray{background:rgba(107,122,153,.14);color:#52607d}
 .flag-cell{max-width:200px;white-space:normal;line-height:1.4}
 
@@ -180,7 +181,8 @@ td.num{text-align:right}
     <button class="nav-tab" onclick="showPage('scatter')">估值散点</button>
     <button class="nav-tab" onclick="showPage('traditional')">传统候选</button>
     <button class="nav-tab" onclick="showPage('reports')">深挖简报</button>
-    <button class="nav-tab" onclick="showPage('financials')">金融股(备查)</button>
+    <button class="nav-tab" onclick="showPage('financials')">金融股</button>
+    <button class="nav-tab" onclick="showPage('flags')">红旗异动</button>
   </div>
   <div class="nav-right">更新于 <span id="update-time">—</span></div>
 </nav>
@@ -204,6 +206,13 @@ td.num{text-align:right}
       <div class="stat"><div class="stat-val" id="ml-count">—</div><div class="stat-lbl">只股票</div></div>
       <div class="stat"><div class="stat-val" id="ml-industry-count">—</div><div class="stat-lbl">个行业</div></div>
     </div>
+  </div>
+  <div style="font-size:12px;color:var(--muted);margin-bottom:12px;line-height:1.7">
+    <strong style="color:var(--text)">结论</strong> 按行业内排名给判断:
+    <span class="badge badge-green">又便宜又赚钱</span> 估值与质量都在行业前列 ·
+    <span class="badge badge-blue">估值便宜 / 质地优</span> 单项领先 ·
+    <span class="badge badge-red">⚠ 有红旗</span> 触发风险信号需先排雷。
+    <strong style="color:var(--text)">行业排名</strong> = 该股综合分在<strong style="color:var(--text)">本行业</strong>内的名次(如 3/45)—— 这是单看 F10 给不出的横向对比。点名称看深挖简报。
   </div>
   <div class="tbl-wrap" id="ml-table-wrap">
     <div class="loading"><span class="loading-dot"></span><span class="loading-dot"></span><span class="loading-dot"></span><br><br>加载母清单…</div>
@@ -266,19 +275,44 @@ td.num{text-align:right}
 
 <!-- ══ 金融股(备查)══ -->
 <div class="page" id="page-financials">
-  <div style="margin-bottom:14px;padding:12px 16px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;font-size:13px;color:var(--muted);line-height:1.6">
-    金融股<strong style="color:var(--text)">不参与神奇公式打分</strong>:现金流、资产负债率、投入资本回报率、反向现金流折现 口径对金融业不适用(负债=存款是原料而非杠杆)。
-    下表为金融股<strong style="color:var(--text)">备查清单</strong>,列适用于金融业的指标:市净率、三年净资产收益率、总资产净利率(银行口径ROA)、资产负债率、净利润增速。
-    <strong style="color:var(--text)">不良率·拨备覆盖率·资本充足率·净息差</strong> 不在免费数据源内,暂未收录,如需评估银行请另查年报。
+  <div style="margin-bottom:14px;padding:12px 16px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;font-size:13px;color:var(--muted);line-height:1.7">
+    金融股不走神奇公式(现金流/负债率口径不适用),这里换一套<strong style="color:var(--text)">「谁又便宜又稳」</strong>的视角:
+    在<strong style="color:var(--text)">同行业内</strong>按 市净率(越低越便宜)+ 三年净资产收益率(越高越能赚)排名,
+    <span class="badge badge-green">又便宜又稳</span> = 两项都在行业前列且利润未明显下滑;
+    <span class="badge badge-red">⚠ 利润下滑</span> = 增速大幅为负,先看是不是踩雷。
+    <span style="color:var(--muted)">不良率·拨备·资本充足率·净息差 不在免费源内,暂缺。</span>
   </div>
   <div class="toolbar">
     <input type="text" id="fin-search" placeholder="搜索代码 / 名称…" oninput="renderFinancials()">
+    <select id="fin-sector" onchange="renderFinancials()"><option value="">全部金融股</option></select>
     <div class="stat-bar">
       <div class="stat"><div class="stat-val" id="fin-count">—</div><div class="stat-lbl">只金融股</div></div>
     </div>
   </div>
   <div class="tbl-wrap" id="fin-table-wrap">
     <div class="loading"><span class="loading-dot"></span><span class="loading-dot"></span><span class="loading-dot"></span><br><br>加载金融股…</div>
+  </div>
+</div>
+
+<!-- ══ 红旗异动 ══ -->
+<div class="page" id="page-flags">
+  <div style="margin-bottom:14px;padding:12px 16px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;font-size:13px;color:var(--muted);line-height:1.7">
+    母清单里触发<strong style="color:var(--text)">风险红旗</strong>的票一览(截至 <span id="flags-date" style="color:var(--accent2)">—</span> 的因子快照,非实时盘口)。
+    两类红旗:<strong style="color:var(--text)">业绩首亏/续亏/预减</strong> 是<strong style="color:var(--text)">前瞻</strong>信号(来自公司业绩预告,补历史数据的盲点);
+    <strong style="color:var(--text)">营收骤降/高杠杆/现金流</strong> 是基本面体检(向后看)。
+    <strong style="color:var(--text)">多重红旗</strong> 同时中招的最该先排雷。点名称看深挖简报。
+  </div>
+  <div id="flags-cards" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px"></div>
+  <div class="toolbar">
+    <input type="text" id="flags-search" placeholder="搜索代码 / 名称…" oninput="renderFlags()">
+    <select id="flags-type" onchange="renderFlags()"><option value="">全部红旗类型</option></select>
+    <div class="stat-bar">
+      <div class="stat"><div class="stat-val" id="flags-count">—</div><div class="stat-lbl">只带红旗</div></div>
+      <div class="stat"><div class="stat-val" id="flags-multi" style="color:var(--warn)">—</div><div class="stat-lbl">多重红旗</div></div>
+    </div>
+  </div>
+  <div class="tbl-wrap" id="flags-table-wrap">
+    <div class="loading"><span class="loading-dot"></span><span class="loading-dot"></span><span class="loading-dot"></span><br><br>加载红旗…</div>
   </div>
 </div>
 
@@ -375,6 +409,42 @@ function sortRows(rows) {
   });
 }
 
+// 行业内综合排名:同行业按综合分(越小越好)排序,给每只票打 _indRank / _indN
+function computeIndustryRanks(rows) {
+  const byInd = {};
+  rows.forEach(r => { (byInd[r.industry] = byInd[r.industry] || []).push(r); });
+  Object.values(byInd).forEach(list => {
+    const ranked = list.filter(r => num(r.score) !== null)
+                       .sort((a,b) => num(a.score) - num(b.score));
+    const n = ranked.length;
+    ranked.forEach((r,i) => { r._indRank = i+1; r._indN = n; });
+    list.forEach(r => { if (r._indN === undefined) r._indN = n; });
+  });
+}
+
+// 一句话结论:用便宜排名/质量排名/红旗/可信度 拼出确定性的判断(不调用大模型)
+function verdict(r) {
+  const n = r._indN || 0;
+  const cr = num(r.cheap_rank), qr = num(r.quality_rank);
+  const top = (rank) => rank !== null && n > 0 && rank <= Math.max(3, n*0.2);  // 行业前20%或前3
+  const cheap = top(cr), quality = top(qr);
+  const flag = r.flags && r.flags.trim();
+  const low = r.rank_confidence && r.rank_confidence.includes('低');
+
+  let text, cls;
+  if (cheap && quality) { text = '又便宜又赚钱'; cls = 'green'; }
+  else if (cheap)       { text = '估值便宜';     cls = 'blue';  }
+  else if (quality)     { text = '质地优';       cls = 'blue';  }
+  else                  { text = '无突出';       cls = 'muted'; }
+  if (flag) { text = '⚠ ' + text + '·有红旗'; cls = 'red'; }   // 红旗优先警示
+  else if (low) { text += '·数据存疑'; if (cls === 'green' || cls === 'blue') cls = 'yellow'; }
+
+  // 理由:行业内便宜/质量的具体名次(让排名透明)
+  const reason = (cr !== null && qr !== null && n)
+    ? `便宜${cr|0}/${n} · 质量${qr|0}/${n}` : '';
+  return { text, cls, reason };
+}
+
 function renderMasterlist() {
   ML_PAGE = 1;
   const filtered = filterMasterlist();
@@ -390,16 +460,14 @@ function renderMlPage(sorted) {
   const slice = sorted.slice((ML_PAGE-1)*ML_PAGE_SIZE, ML_PAGE*ML_PAGE_SIZE);
 
   const cols = [
-    {key:'code',label:'代码',sortable:false},
     {key:'name',label:'名称',sortable:false},
+    {key:'verdict',label:'结论',sortable:false},
     {key:'industry',label:'行业',sortable:false},
+    {key:'_indRank',label:'行业排名',sortable:true},
     {key:'score',label:'综合分',sortable:true},
     {key:'pb',label:'市净率',sortable:true},
     {key:'roe_3y',label:'三年净资产收益率',sortable:true},
-    {key:'cfq',label:'现金流质量',sortable:true},
     {key:'debt_ratio',label:'负债率',sortable:true},
-    {key:'cheap_rank',label:'便宜排名',sortable:true},
-    {key:'quality_rank',label:'质量排名',sortable:true},
     {key:'flags',label:'风险红旗',sortable:false},
     {key:'rank_confidence',label:'可信度',sortable:false},
   ];
@@ -421,18 +489,24 @@ function renderMlPage(sorted) {
     const roe = num(r.roe_3y);
     const pbColor = pb!==null ? (pb<1?'color:#00805c;font-weight:600':pb<2?'color:var(--text)':'color:var(--muted)') : '';
     const roeColor = roe!==null ? (roe>15?'color:#00805c;font-weight:600':roe>8?'color:var(--text)':'color:var(--muted)') : '';
+    const v = verdict(r);
+    const rankCell = r._indRank
+      ? `<span style="color:var(--text);font-weight:600">${r._indRank}</span><span style="color:var(--muted)">/${r._indN}</span>`
+      : '<span style="color:var(--muted)">—</span>';
+    // 业绩预告催化(正向):在结论下加一行绿色提示
+    const cat = r.preann_dir === 'pos'
+      ? `<div style="font-size:10px;color:#00805c;margin-top:2px">↑业绩${r.preann_type}${(r.preann_type==='预增'||r.preann_type==='略增')&&r.preann_pct!=null?` +${r.preann_pct}%`:''}</div>`
+      : '';
 
     html += `<tr>
-      <td class="code">${r.code||'—'}</td>
-      <td class="name"><a onclick="openReport('${r.code}')">${r.name||'—'}</a></td>
+      <td class="name"><a onclick="openReport('${r.code}')">${r.name||'—'}</a><div style="font-size:10px;color:var(--muted);font-family:var(--mono)">${r.code||''}</div></td>
+      <td><span class="badge badge-${v.cls}">${v.text}</span>${v.reason?`<div style="font-size:10px;color:var(--muted);margin-top:3px;font-family:var(--mono)">${v.reason}</div>`:''}${cat}</td>
       <td style="color:var(--muted);font-size:12px">${r.industry||'—'}</td>
-      <td class="num" style="color:var(--accent);font-weight:500">${fmt(r.score,1)}</td>
+      <td class="num">${rankCell}</td>
+      <td class="num" style="color:var(--muted)">${fmt(r.score,1)}</td>
       <td class="num" style="${pbColor}">${fmt(r.pb)}</td>
       <td class="num" style="${roeColor}">${fmtPct(r.roe_3y)}</td>
-      <td class="num">${fmt(r.cfq)}</td>
-      <td class="num">${fmtPct(r.debt_ratio)}</td>
-      <td class="num" style="color:var(--muted)">${fmt(r.cheap_rank,0)}</td>
-      <td class="num" style="color:var(--muted)">${fmt(r.quality_rank,0)}</td>
+      <td class="num" style="color:var(--muted)">${fmtPct(r.debt_ratio)}</td>
       <td class="flag-cell">${hasFlag ? `<span class="badge badge-red">${r.flags}</span>` : '<span style="color:var(--muted)">—</span>'}</td>
       <td>${lowConf ? `<span class="badge badge-yellow">低</span>` : '<span class="badge badge-green">正常</span>'}</td>
     </tr>`;
@@ -785,45 +859,157 @@ function submitRequest() {
 }
 
 // ══════════════════════════════════════════
-// 金融股(备查,只读)
+// 金融股:谁又便宜又稳
+// ══════════════════════════════════════════
+// 同行业内:便宜=市净率升序名次,盈利=三年净资产收益率降序名次,综合取两者均值
+function computeFinancialRanks(rows) {
+  const byInd = {};
+  rows.forEach(r => { (byInd[r.industry] = byInd[r.industry] || []).push(r); });
+  Object.values(byInd).forEach(list => {
+    const N = list.length;
+    list.filter(r => num(r.pb) !== null).sort((a,b) => num(a.pb)-num(b.pb))
+        .forEach((r,i) => { r._cheapR = i+1; });
+    list.filter(r => num(r.roe_3y) !== null).sort((a,b) => num(b.roe_3y)-num(a.roe_3y))
+        .forEach((r,i) => { r._qualR = i+1; });
+    list.forEach(r => { r._finN = N; r._finScore = ((r._cheapR||N) + (r._qualR||N)) / 2; });
+    [...list].sort((a,b) => a._finScore - b._finScore).forEach((r,i) => { r._finRank = i+1; });
+  });
+}
+
+function financialVerdict(r) {
+  const N = r._finN || 0, cr = r._cheapR, qr = r._qualR, g = num(r.profit_growth);
+  const top = (k) => k && N > 0 && k <= Math.max(3, N*0.3);   // 行业前30%或前3
+  const cheap = top(cr), quality = top(qr);
+  let text, cls;
+  if (g !== null && g < -15)        { text = '⚠ 利润下滑'; cls = 'red';   }  // 增速大幅为负优先警示
+  else if (cheap && quality)        { text = '又便宜又稳'; cls = 'green'; }
+  else if (cheap)                   { text = '便宜';       cls = 'blue';  }
+  else if (quality)                 { text = '稳健';       cls = 'blue';  }
+  else                              { text = '一般';       cls = 'muted'; }
+  const reason = (cr && qr && N) ? `便宜${cr}/${N} · 盈利${qr}/${N}` : '';
+  return { text, cls, reason };
+}
+
+// ── 红旗异动 digest ──
+// 前瞻红旗(业绩预告)排在前,基本面红旗在后;由急到缓
+const FLAG_ORDER = ['业绩首亏','业绩续亏','业绩预减','业绩略减','营收骤降','高杠杆','单年现金流负','现金流持续弱'];
+const FLAG_SEV = {'业绩首亏':2,'业绩续亏':2,'业绩预减':2,'业绩略减':1,
+                  '营收骤降':2,'高杠杆':2,'单年现金流负':1,'现金流持续弱':1};
+function parseFlags(s) { return String(s||'').split(/[、,，;；\s]+/).filter(Boolean); }
+function flagSeverity(s) { return Math.max(0, ...parseFlags(s).map(f => FLAG_SEV[f]||1)); }
+function flagBadge(f) {
+  const cls = (FLAG_SEV[f]||1) >= 2 ? 'badge-red' : 'badge-yellow';
+  return `<span class="badge ${cls}" style="margin:1px 2px">${f}</span>`;
+}
+function setFlagType(t) { document.getElementById('flags-type').value = t; renderFlags(); }
+
+function renderFlags() {
+  const flagged = DATA.masterlist.filter(r => r.flags && String(r.flags).trim());
+  const counts = {};
+  flagged.forEach(r => parseFlags(r.flags).forEach(f => counts[f] = (counts[f]||0)+1));
+  const multi = flagged.filter(r => parseFlags(r.flags).length >= 2);
+
+  // 概览卡片(按严重度排序,点击筛选)
+  const ordered = [...new Set([...FLAG_ORDER.filter(f => counts[f]), ...Object.keys(counts)])];
+  let cards = ordered.map(f => {
+    const color = (FLAG_SEV[f]||1) >= 2 ? '#c0392b' : '#b45309';
+    return `<div onclick="setFlagType('${f}')" style="cursor:pointer;background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px 16px;min-width:110px">
+      <div style="font-size:22px;font-family:var(--mono);color:${color}">${counts[f]}</div>
+      <div style="font-size:12px;color:var(--muted);margin-top:2px">${f}</div></div>`;
+  }).join('');
+  cards += `<div onclick="setFlagType('')" style="cursor:pointer;background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px 16px;min-width:110px">
+    <div style="font-size:22px;font-family:var(--mono);color:var(--accent)">${flagged.length}</div>
+    <div style="font-size:12px;color:var(--muted);margin-top:2px">全部带红旗</div></div>`;
+  document.getElementById('flags-cards').innerHTML = cards;
+  document.getElementById('flags-multi').textContent = multi.length;
+
+  // 填充类型下拉(一次)
+  const sel = document.getElementById('flags-type');
+  if (sel.options.length <= 1) ordered.forEach(f => {
+    const o = document.createElement('option'); o.value = f; o.textContent = `${f}(${counts[f]})`; sel.appendChild(o);
+  });
+
+  const q = (document.getElementById('flags-search')?.value || '').toLowerCase();
+  const ft = sel.value;
+  let rows = flagged.filter(r => {
+    if (ft && !parseFlags(r.flags).includes(ft)) return false;
+    if (q && !String(r.code||'').includes(q) && !(r.name||'').toLowerCase().includes(q)
+          && !(r.industry||'').toLowerCase().includes(q)) return false;
+    return true;
+  });
+  // 多重红旗优先 → 严重度 → 行业排名
+  rows.sort((a,b) => {
+    const d1 = parseFlags(b.flags).length - parseFlags(a.flags).length; if (d1) return d1;
+    const d2 = flagSeverity(b.flags) - flagSeverity(a.flags); if (d2) return d2;
+    return (a._indRank||9999) - (b._indRank||9999);
+  });
+  document.getElementById('flags-count').textContent = rows.length;
+
+  let html = '<table><thead><tr>'
+    + '<th>名称</th><th>行业</th><th>行业排名</th><th>风险红旗</th><th>市净率</th><th>三年净资产收益率</th><th>结论</th>'
+    + '</tr></thead><tbody>';
+  rows.forEach(r => {
+    const v = verdict(r);
+    const fs = parseFlags(r.flags);
+    const rankCell = r._indRank ? `<span style="color:var(--text);font-weight:600">${r._indRank}</span><span style="color:var(--muted)">/${r._indN}</span>` : '—';
+    html += `<tr>
+      <td class="name"><a onclick="openReport('${r.code}')">${r.name||'—'}</a><div style="font-size:10px;color:var(--muted);font-family:var(--mono)">${r.code||''}</div></td>
+      <td style="color:var(--muted);font-size:12px">${r.industry||'—'}</td>
+      <td class="num">${rankCell}</td>
+      <td class="flag-cell">${fs.map(flagBadge).join('')}${fs.length>=2?'<span class="badge badge-red" style="margin-left:2px">×'+fs.length+'</span>':''}</td>
+      <td class="num">${fmt(r.pb)}</td>
+      <td class="num">${fmtPct(r.roe_3y)}</td>
+      <td><span class="badge badge-${v.cls}">${v.text}</span></td>
+    </tr>`;
+  });
+  html += '</tbody></table>';
+  if (!rows.length) html = '<div style="color:var(--muted);padding:40px;text-align:center">无匹配红旗</div>';
+  document.getElementById('flags-table-wrap').innerHTML = html;
+}
+
+// ══════════════════════════════════════════
+// 金融股:谁又便宜又稳
 // ══════════════════════════════════════════
 function renderFinancials() {
   const q = (document.getElementById('fin-search')?.value || '').toLowerCase();
-  const rows = DATA.financials.filter(r =>
-    !q || String(r.code||'').includes(q)
+  const sector = document.getElementById('fin-sector')?.value || '';
+  const rows = DATA.financials.filter(r => {
+    if (sector && r.industry !== sector) return false;
+    return !q || String(r.code||'').includes(q)
        || (r.name||'').toLowerCase().includes(q)
-       || (r.industry||'').toLowerCase().includes(q));
+       || (r.industry||'').toLowerCase().includes(q);
+  });
   document.getElementById('fin-count').textContent = rows.length;
 
   if (!rows.length) {
     document.getElementById('fin-table-wrap').innerHTML =
-      '<div style="color:var(--muted);padding:40px;text-align:center">暂无金融股备查数据'
-      + '(由 push_to_sheets.py 从 factor_financials.csv 生成)</div>';
+      '<div style="color:var(--muted);padding:40px;text-align:center">无匹配金融股</div>';
     return;
   }
 
-  const sorted = [...rows].sort((a,b)=>{
-    const av=num(a.roe_3y), bv=num(b.roe_3y);
-    if (av===null && bv===null) return 0;
-    if (av===null) return 1; if (bv===null) return -1;
-    return bv-av;                      // 三年净资产收益率 降序
-  });
+  // 默认按「又便宜又稳」综合名次升序,把又便宜又稳的排在最前
+  const sorted = [...rows].sort((a,b) => (a._finRank||9999) - (b._finRank||9999));
 
   let html = '<table><thead><tr>'
-    + '<th>代码</th><th>名称</th><th>行业</th><th>市净率</th>'
+    + '<th>名称</th><th>结论</th><th>行业</th><th>行业排名</th><th>市净率</th>'
     + '<th>三年净资产收益率</th><th>总资产净利率</th><th>资产负债率</th><th>净利润增速</th>'
     + '</tr></thead><tbody>';
   sorted.forEach(r => {
     const g = num(r.profit_growth);
     const gColor = g===null ? '' : g<0 ? 'color:#c0392b' : 'color:#00805c';
+    const v = financialVerdict(r);
+    const rankCell = r._finRank
+      ? `<span style="color:var(--text);font-weight:600">${r._finRank}</span><span style="color:var(--muted)">/${r._finN}</span>`
+      : '<span style="color:var(--muted)">—</span>';
     html += `<tr>
-      <td class="code">${r.code||'—'}</td>
-      <td class="name">${r.name||'—'}</td>
+      <td class="name">${r.name||'—'}<div style="font-size:10px;color:var(--muted);font-family:var(--mono)">${r.code||''}</div></td>
+      <td><span class="badge badge-${v.cls}">${v.text}</span>${v.reason?`<div style="font-size:10px;color:var(--muted);margin-top:3px;font-family:var(--mono)">${v.reason}</div>`:''}</td>
       <td style="color:var(--muted);font-size:12px">${r.industry||'—'}</td>
+      <td class="num">${rankCell}</td>
       <td class="num">${fmt(r.pb)}</td>
       <td class="num">${fmtPct(r.roe_3y)}</td>
-      <td class="num">${fmtPct(r.roa)}</td>
-      <td class="num">${fmtPct(r.debt_ratio)}</td>
+      <td class="num" style="color:var(--muted)">${fmtPct(r.roa)}</td>
+      <td class="num" style="color:var(--muted)">${fmtPct(r.debt_ratio)}</td>
       <td class="num" style="${gColor}">${fmtPct(r.profit_growth)}</td>
     </tr>`;
   });
@@ -841,8 +1027,12 @@ async function init() {
   DATA.reports     = d.reports     || [];
   DATA.financials  = d.financials  || [];
 
-  document.getElementById('update-time').textContent =
-    d.generated || new Date().toLocaleDateString('zh-CN',{month:'short',day:'numeric'});
+  computeIndustryRanks(DATA.masterlist);   // 行业内综合排名 + 样本数(给结论/排名列用)
+  computeFinancialRanks(DATA.financials);  // 金融股「又便宜又稳」行业内名次
+
+  const stamp = d.generated || new Date().toLocaleDateString('zh-CN',{month:'short',day:'numeric'});
+  document.getElementById('update-time').textContent = stamp;
+  const fd = document.getElementById('flags-date'); if (fd) fd.textContent = stamp;
 
   if (!DATA.masterlist.length) {
     document.getElementById('ml-table-wrap').innerHTML =
@@ -852,9 +1042,14 @@ async function init() {
   }
 
   initMasterlist();
+  // 金融股行业筛选下拉
+  const finSel = document.getElementById('fin-sector');
+  if (finSel) [...new Set(DATA.financials.map(r=>r.industry).filter(Boolean))].sort()
+    .forEach(s => { const o=document.createElement('option'); o.value=s; o.textContent=s; finSel.appendChild(o); });
   renderTraditional();
   renderReportList();
   renderFinancials();
+  renderFlags();
 }
 
 init();

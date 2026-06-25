@@ -15,6 +15,7 @@
 #   ./build_and_deploy.sh --process-requests   # 处理用户提交的看票申请(requests 表)、入库并部署
 #   ./build_and_deploy.sh --daily              # 日常例程:处理看票申请 → 刷新 data.js → 部署(适合定时跑)
 #   ./build_and_deploy.sh --banks              # 刷新金融股评分卡(净资产收益率/ROA等,季度级)→ 重建 data.js 并部署
+#   ./build_and_deploy.sh --preann             # 刷新业绩预告(前瞻红旗:首亏/预减/扭亏)→ 重建 data.js 并部署
 #   ./build_and_deploy.sh --all --no-deploy    # 只本地生成,不部署(本地预览用)
 #   ./build_and_deploy.sh --datajs             # 仅重建 data.js(不重算因子)并部署
 #
@@ -35,12 +36,14 @@ cd "$(dirname "$0")"
 DEPLOY=1
 DAILY=0
 BANKS=0
+PREANN=0
 ARGS=()
 for a in "$@"; do
   case "$a" in
     --no-deploy) DEPLOY=0 ;;
     --daily)     DAILY=1 ;;
     --banks)     BANKS=1 ;;
+    --preann)    PREANN=1 ;;
     *)           ARGS+=("$a") ;;
   esac
 done
@@ -51,11 +54,19 @@ if [[ "$BANKS" -eq 1 ]]; then
   "$PYTHON" bank_scorecard.py
   echo "==> [1/2] 重建 data.js(并入评分卡)"
   "$PYTHON" push_to_sheets.py --datajs
+elif [[ "$PREANN" -eq 1 ]]; then
+  # 业绩预告(前瞻红旗层):一次全市场调用,刷新后重建 data.js
+  echo "==> [1/2] 刷新业绩预告:earnings_preann.py"
+  "$PYTHON" earnings_preann.py
+  echo "==> [1/2] 重建 data.js(并入前瞻红旗)"
+  "$PYTHON" push_to_sheets.py --datajs
 elif [[ "$DAILY" -eq 1 ]]; then
-  # 日常例程:处理看票申请,然后无论是否有新申请都从 Sheets 刷新一遍 data.js,保证发布态一致
-  echo "==> [1/2] 日常例程:处理看票申请"
+  # 日常例程:看票申请 → 刷新业绩预告(前瞻红旗)→ 从 Sheets 刷新 data.js
+  echo "==> [1/3] 日常例程:处理看票申请"
   "$PYTHON" push_to_sheets.py --process-requests
-  echo "==> [1/2] 刷新 data.js(同步 Sheets 最新简报)"
+  echo "==> [2/3] 刷新业绩预告(前瞻红旗层)"
+  "$PYTHON" earnings_preann.py || echo "  (业绩预告刷新失败,跳过,沿用旧值)"
+  echo "==> [3/3] 刷新 data.js(同步 Sheets 最新简报 + 前瞻红旗)"
   "$PYTHON" push_to_sheets.py --datajs
 else
   # 不带业务参数时,默认刷新全部
