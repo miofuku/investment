@@ -427,6 +427,7 @@ def generate_data_js(ml, tr, fi, reports=None, out_path="data.js"):
         "outcomes":    clean(sig.get("outcomes", [])),
         "signal_summary": clean(sig.get("summary", {})),
         "lens_scorecard": clean(sig.get("lens_scorecard", {})),
+        "realization": clean(sig.get("realization", [])),
         "lenses":      clean(lenses),
     }
     js = f"// 自动生成,勿手动编辑。由 push_to_sheets.py 生成于 {TODAY}\n"

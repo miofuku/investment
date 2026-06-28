@@ -84,7 +84,8 @@
 | `factor_trad_value.csv` / `factor_trad_stable.csv` | 传统行业 A/B 候选 |
 | `factor_lens_<name>.csv` / `factor_lenses.json` | 各价值镜头候选(`lens_screen.py` 产);json 为合并包,供前端/复用 |
 | `signals.csv` | **前瞻信号档案**(append-only,每条简报一行的当时判断快照+冻结的镜头归属)。**不可事后复原**,是成绩单的唯一真源;已有 Google Sheets『signals』表双向备份(`--backup-signals`,见 §9) |
-| `signal_outcomes.csv` | 信号对照结果(可由 `signals.csv`+行情重算,前端「信号跟踪」页数据源) |
+| `signal_outcomes.csv` | 前瞻价格对照结果(可由 `signals.csv`+行情重算,前端「信号跟踪」页数据源) |
+| `signal_realization.csv` | 假设兑现核对(新年报 vs 当时隐含增速/业绩红旗;可重算,前端「信号跟踪」页假设兑现表) |
 
 ### 2.5 可删(一次性探针 + 旧版本)
 
@@ -279,16 +280,25 @@ Pages 站点默认公开。用 **Cloudflare Access**(Zero Trust,免费 ≤50 人
 的个股收益,并与**沪深300同窗口收益**对照(超额=个股−基准)。未到期→`pending`;取不到价→`unable`(诚实,不编造);算出→`completed`。
 **简报从不给买卖建议**,所以这是"发布以来价格走势(相对基准)"的客观观察,不是"我们的推荐赚没赚"。
 
+**假设兑现(`signal_realization.csv`):** 价格只是表象,更要紧的是**当时的判断对不对**。对每条信号,找**发布日严格之后才结束的首个年报**
+(确保结果在发布时绝不可知,**零前视**;发布后还没新年报→`pending`,财务取不到→`unable`),核对当时冻结的假设:
+- **市场隐含增速**:实际**净利润同比** vs 当时 `implied_g`(反向DCF)→ 达成/超越 · 低于隐含 · 落空 · 不适用。
+  > 口径诚实标注:净利同比是单年值,与反向DCF 的多年 FCF 隐含增速仅作**方向性**对照,非精确等价。
+- **业绩红旗**:亏损型(首亏/续亏/预亏)看是否真亏、下滑型(预减/略减)看是否真降 → 兑现/未兑现/无法核;
+  其余红旗(监管/减持/大宗/ROIC失真)非业绩类,不自动核验。
+这把成绩单从"价格动没动"升级为"**当时的分析对没对**"——价值投资真正该被检验的东西。数字全来自同花顺年报摘要,确定性计算。
+
 **数据源纪律(同 §0):** 价格走**新浪**(`stock_zh_a_daily`/`stock_zh_index_daily`),不走本机不稳的东财;取不到诚实降级。
 
 **命令:**
 ```bash
-python signal_tracker.py --show          # 看信号档案 + 成绩单概览
-python signal_tracker.py --evaluate      # 对到期信号做前瞻对照,写 signal_outcomes.csv
-./build_and_deploy.sh --daily            # 日常例程已内置:看票申请→业绩预告→信号对照→刷 data.js→部署
+python signal_tracker.py --show          # 看信号档案 + 价格成绩单 + 按镜头 + 假设兑现概览
+python signal_tracker.py --evaluate      # 前瞻价格对照(沪深300超额),写 signal_outcomes.csv
+python signal_tracker.py --realize       # 假设兑现核对(隐含增速/业绩红旗),写 signal_realization.csv
+./build_and_deploy.sh --daily            # 日常例程已内置:看票申请→业绩预告→镜头→价格对照→假设兑现→备份→刷 data.js→部署
 ```
 - **快照是自动的**:`push_to_sheets.py --report`(及看票申请处理)发布简报时自动调 `snapshot_signal`,无需手动。
-- 前端新增「**信号跟踪**」页:概览卡(在档数/已到期/跑赢沪深300占比/平均超额)+ 明细表(隐含增速/PB/个股/沪深300/超额/状态)。
+- 前端「**信号跟踪**」页:概览卡(在档数/已到期/跑赢沪深300占比/平均超额)+ 价格对照明细表 + **假设兑现表**(隐含增速兑现/业绩红旗核对)。
 
 **耐久性:Sheets 双向备份(已落地)。** `signals.csv` 是唯一**不可复原**的产物(`signal_outcomes.csv` 可重算)。
 `push_to_sheets.py --backup-signals` 在 本地 `signals.csv` ↔ Google Sheets『signals』表 间按 `(code, signal_date)` 取并集:

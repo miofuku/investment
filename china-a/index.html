@@ -360,6 +360,15 @@ td.num{text-align:right}
   <div class="tbl-wrap" id="sig-table-wrap">
     <div class="loading"><span class="loading-dot"></span><span class="loading-dot"></span><span class="loading-dot"></span><br><br>加载信号跟踪…</div>
   </div>
+
+  <div style="margin:22px 0 12px;padding:12px 16px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;font-size:13px;color:var(--muted);line-height:1.7">
+    <strong style="color:var(--text)">假设兑现</strong>:价格只是表象,更要紧的是<strong style="color:var(--text)">当时的判断对不对</strong>。
+    每条简报发布后等<strong style="color:var(--text)">新年报</strong>(发布日之后才结束的首个年度,零前视)到来,核对两件事:
+    ① <strong style="color:var(--text)">市场隐含增速</strong>(反向DCF)有没有兑现 —— 用实际净利润同比作方向性对照;
+    ② 当时的<strong style="color:var(--text)">业绩红旗</strong>(首亏/续亏/预减…)有没有被年报证实。
+    <span style="color:var(--muted)">净利同比是单年口径,与反向DCF的多年FCF隐含增速仅作方向性对照,非精确等价。</span>
+  </div>
+  <div class="tbl-wrap" id="sig-realize-wrap"></div>
 </div>
 
 <script>
@@ -1090,6 +1099,66 @@ function renderSignals() {
   html += '</tbody></table>';
   if (!rows.length) html = '<div style="color:var(--muted);padding:40px;text-align:center">还没有在档信号 — 发布简报后会自动冻结快照</div>';
   document.getElementById('sig-table-wrap').innerHTML = html;
+
+  renderRealization(q);
+}
+
+// 假设兑现表(新年报到来后核对)
+function renderRealization(q) {
+  const wrap = document.getElementById('sig-realize-wrap');
+  if (!wrap) return;
+  let rows = (DATA.realization || []).filter(r =>
+    !q || String(r.code||'').includes(q) || (r.name||'').toLowerCase().includes(q)
+       || (r['industry']||'').toLowerCase().includes(q));
+  // 已核在前,其次待新年报,最后取数失败
+  const order = {completed:0, pending:1, unable:2};
+  rows.sort((a,b)=>(order[a.status]??9)-(order[b.status]??9)
+                 || String(b.signal_date).localeCompare(String(a.signal_date)));
+
+  const gvBadge = gv => {
+    if (!gv) return '<span style="color:var(--muted)">—</span>';
+    let bg = '#5b7'; // 默认
+    if (gv.startsWith('达成')) bg = '#00a878';
+    else if (gv.startsWith('落空')) bg = '#e53e3e';
+    else if (gv.startsWith('低于')) bg = '#b45309';
+    else if (gv.startsWith('不适用')) return '<span style="color:var(--muted)">不适用</span>';
+    return `<span class="badge" style="background:${bg};color:#fff;font-size:11px">${gv}</span>`;
+  };
+  const flagBadge = fc => {
+    if (!fc) return '<span style="color:var(--muted)">—</span>';
+    // 例:"业绩预减→未兑现; 首亏→兑现"
+    return fc.split(';').map(seg=>{
+      const hit = seg.includes('未兑现')?'#00a878':(seg.includes('兑现')?'#e53e3e':'var(--muted)');
+      return `<span style="color:${hit};font-size:11px;margin-right:6px">${seg.trim()}</span>`;
+    }).join('');
+  };
+  const statBadge = st => st==='completed'?'<span class="badge badge-green">已核</span>'
+                        : st==='pending'?'<span class="badge badge-blue">待新年报</span>'
+                        : '<span class="badge badge-red">取数失败</span>';
+
+  let html = '<table><thead><tr>'
+    + '<th>名称</th><th>发布日</th><th>核对年报</th><th>隐含增速</th><th>实际净利同比</th>'
+    + '<th>隐含增速兑现</th><th>业绩红旗核对</th><th>状态</th>'
+    + '</tr></thead><tbody>';
+  rows.forEach(r => {
+    const code=String(r.code||'').padStart(6,'0');
+    const ig = num(r.implied_g_pct);
+    const py = num(r.realized_profit_yoy_pct);
+    const pyColor = py===null?'var(--muted)':(py>0?'#00a878':'#e53e3e');
+    html += `<tr>
+      <td class="name"><a onclick="openReport('${code}')">${r.name||'—'}</a><div style="font-size:10px;color:var(--muted);font-family:var(--mono)">${code}</div></td>
+      <td class="num" style="font-size:12px">${r.signal_date||'—'}</td>
+      <td class="num" style="font-size:12px">${r.forward_period||'—'}</td>
+      <td class="num">${ig===null?'<span style="color:var(--muted)">不适用</span>':ig.toFixed(1)+'%'}</td>
+      <td class="num"><span style="color:${pyColor};font-weight:600">${py===null?'—':(py>0?'+':'')+py.toFixed(1)+'%'}</span></td>
+      <td>${gvBadge(r.growth_verdict)}</td>
+      <td>${flagBadge(r.flag_check)}</td>
+      <td>${statBadge(r.status)}</td>
+    </tr>`;
+  });
+  html += '</tbody></table>';
+  if (!rows.length) html = '<div style="color:var(--muted);padding:30px;text-align:center">暂无可核对的信号(新年报到来后自动核对)</div>';
+  wrap.innerHTML = html;
 }
 
 // ══════════════════════════════════════════
@@ -1239,6 +1308,7 @@ async function init() {
   DATA.outcomes    = d.outcomes    || [];
   DATA.signal_summary = d.signal_summary || {};
   DATA.lens_scorecard = d.lens_scorecard || {};
+  DATA.realization = d.realization || [];
   DATA.lenses      = d.lenses      || {};
 
   computeIndustryRanks(DATA.masterlist);   // 行业内综合排名 + 样本数(给结论/排名列用)

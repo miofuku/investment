@@ -49,6 +49,11 @@ except Exception:
 
 SIGNALS_CSV = "signals.csv"
 OUTCOMES_CSV = "signal_outcomes.csv"
+REALIZATION_CSV = "signal_realization.csv"
+
+# 业绩类红旗关键词(可证伪子集):亏损型 vs 下滑型。其余红旗(监管/减持/大宗)不自动核验。
+_LOSS_FLAGS = ("首亏", "续亏", "预亏")
+_DECLINE_FLAGS = ("预减", "略减")
 
 # 价值取向的对照窗口:季度 / 半年 / 一年(按交易日近似)。短线窗口刻意不设。
 HORIZONS = {"1q": 63, "2q": 126, "1y": 252}
@@ -299,6 +304,158 @@ def evaluate_signals(horizons=HORIZONS, dryrun=False, outcomes_csv=OUTCOMES_CSV)
 # ================================================================
 # 给前端 data.js 用:信号档案 + 最新对照,合成一张可读表
 # ================================================================
+# ================================================================
+# 假设兑现:新年报到来后,核对当时冻结的假设(隐含增速 / 业绩红旗)是否兑现
+# ================================================================
+def _parse_cn(x):
+    """同花顺中文数字 → float:处理 亿/万 单位与 % 尾巴;'--'/空 → None。"""
+    if x is None:
+        return None
+    if isinstance(x, (int, float)):
+        f = float(x)
+        return None if (math.isnan(f) or math.isinf(f)) else f
+    s = str(x).strip().replace(",", "")
+    if s in ("", "--", "None", "nan", "NaN", "False"):
+        return None
+    s = s.rstrip("%")
+    mult = 1.0
+    if s.endswith("亿"):
+        mult, s = 1e8, s[:-1]
+    elif s.endswith("万"):
+        mult, s = 1e4, s[:-1]
+    try:
+        return float(s) * mult
+    except ValueError:
+        return None
+
+
+_FIN_CACHE = {}
+
+
+def _annual_financials(code):
+    """同花顺年报摘要 → DataFrame[period(date), 营收, 净利润, 营收同比%, 净利润同比%]。
+    只取年报(报告期 1231)。失败/无数据返回 None(诚实降级)。进程内缓存。"""
+    code = str(code).zfill(6)
+    if code in _FIN_CACHE:
+        v = _FIN_CACHE[code]
+        return None if isinstance(v, Exception) else v
+    try:
+        import akshare as ak
+        df = ak.stock_financial_abstract_ths(symbol=code, indicator="按报告期")
+        df["报告期"] = df["报告期"].astype(str)
+        key = df["报告期"].str.replace(r"\D", "", regex=True)
+        ann = df[key.str.endswith("1231")].copy()
+        if ann.empty:
+            raise ValueError("无年报期次")
+        ann["period"] = pd.to_datetime(ann["报告期"]).dt.date
+        out = pd.DataFrame({
+            "period": ann["period"].values,
+            "营收": ann["营业总收入"].map(_parse_cn).values,
+            "净利润": ann["净利润"].map(_parse_cn).values,
+            "营收同比": ann.get("营业总收入同比增长率", pd.Series()).map(_parse_cn).values
+                       if "营业总收入同比增长率" in ann else None,
+            "净利润同比": ann.get("净利润同比增长率", pd.Series()).map(_parse_cn).values
+                        if "净利润同比增长率" in ann else None,
+        }).sort_values("period").reset_index(drop=True)
+        _FIN_CACHE[code] = out
+        return out
+    except Exception as e:
+        _FIN_CACHE[code] = e
+        return None
+
+
+def _earnings_flag_check(flags_str, net_profit, profit_yoy):
+    """对冻结的业绩类红旗,用实际年报核对兑现。返回 [{flag, expect, actual, verdict}]。
+    亏损型(首亏/续亏/预亏)→ 看是否真亏(净利<0);下滑型(预减/略减)→ 看是否真降(同比<0)。
+    其余红旗(监管/减持/大宗/ROIC失真)非业绩类,不自动核验,不列入。"""
+    flags = [f.strip() for f in str(flags_str or "").replace(",", ",").split(",") if f.strip()]
+    checks = []
+    for f in flags:
+        if any(k in f for k in _LOSS_FLAGS):
+            actual_loss = (net_profit is not None and net_profit < 0)
+            checks.append({"flag": f, "expect": "净利润为负",
+                           "actual": ("亏损" if actual_loss else "未亏损") if net_profit is not None else "数据缺",
+                           "verdict": "兑现" if actual_loss else ("未兑现" if net_profit is not None else "无法核")})
+        elif any(k in f for k in _DECLINE_FLAGS):
+            actual_decl = (profit_yoy is not None and profit_yoy < 0)
+            checks.append({"flag": f, "expect": "净利润同比下滑",
+                           "actual": (f"{profit_yoy:.1f}%" if profit_yoy is not None else "数据缺"),
+                           "verdict": "兑现" if actual_decl else ("未兑现" if profit_yoy is not None else "无法核")})
+    return checks
+
+
+def evaluate_realization(dryrun=False, realization_csv=REALIZATION_CSV):
+    """对每条信号:找发布日**之后**才结束的首个年报(零前视),核对当时冻结的假设是否兑现:
+      · 隐含增速:实际净利润同比 vs 当时反向DCF 隐含增速(方向性核对,口径见 note)
+      · 业绩红旗:亏损/下滑型红旗是否被实际年报证实
+    无后续年报→pending;财务取不到→unable(诚实)。整表重算,覆盖写。"""
+    sig = _read_signals()
+    if sig.empty:
+        print("  无信号档案,先发布几条简报再来。")
+        return []
+
+    rows = []
+    for _, s in sig.iterrows():
+        code = str(s["code"]).zfill(6)
+        sdate = _parse_date(s["signal_date"])
+        ig = _num(s.get("implied_g"))
+        ig_pct = round(ig * 100, 1) if ig is not None else None
+        base = {"code": code, "name": s.get("name"), "industry": s.get("industry"),
+                "signal_date": s["signal_date"], "implied_g_pct": ig_pct,
+                "frozen_flags": s.get("major_flags") or ""}
+
+        fin = _annual_financials(code)
+        if fin is None:
+            rows.append({**base, "status": "unable", "forward_period": None,
+                         "realized_rev_yoy_pct": None, "realized_profit_yoy_pct": None,
+                         "net_profit_positive": None, "growth_verdict": None,
+                         "flag_check": "", "note": "财务数据取不到(同花顺源)"})
+            continue
+        # 发布日严格之后结束的首个年报(保守:确保结果在发布时绝不可知,零前视)
+        fwd = fin[fin["period"].apply(lambda d: d > sdate)]
+        if fwd.empty:
+            rows.append({**base, "status": "pending", "forward_period": None,
+                         "realized_rev_yoy_pct": None, "realized_profit_yoy_pct": None,
+                         "net_profit_positive": None, "growth_verdict": None,
+                         "flag_check": "", "note": "发布后尚无新年报,待下个年报季"})
+            continue
+        r = fwd.iloc[0]
+        rev_yoy = _num(r.get("营收同比"))
+        profit_yoy = _num(r.get("净利润同比"))
+        np_val = _num(r.get("净利润"))
+
+        # 隐含增速兑现(方向性):实际净利润同比 vs 市场隐含增速
+        if ig_pct is None or profit_yoy is None:
+            gv = "不适用"
+        elif profit_yoy < 0:
+            gv = "落空(净利负增长,市场隐含增速未兑现)"
+        elif profit_yoy >= ig_pct:
+            gv = "达成/超越(实际增速≥市场隐含)"
+        else:
+            gv = "低于隐含(正增长但不及市场预期)"
+
+        checks = _earnings_flag_check(base["frozen_flags"], np_val, profit_yoy)
+        flag_str = "; ".join(f"{c['flag']}→{c['verdict']}" for c in checks)
+
+        rows.append({**base, "status": "completed",
+                     "forward_period": str(r["period"]),
+                     "realized_rev_yoy_pct": rev_yoy,
+                     "realized_profit_yoy_pct": profit_yoy,
+                     "net_profit_positive": (None if np_val is None else bool(np_val >= 0)),
+                     "growth_verdict": gv, "flag_check": flag_str,
+                     "note": "净利润同比为单年口径,与反向DCF的多年FCF隐含增速仅作方向性对照"})
+
+    done = [r for r in rows if r["status"] == "completed"]
+    pend = [r for r in rows if r["status"] == "pending"]
+    unable = [r for r in rows if r["status"] == "unable"]
+    print(f"  假设兑现:已核 {len(done)} / 待新年报 {len(pend)} / 取数失败 {len(unable)} "
+          f"(共 {len(rows)} 条信号)")
+    if not dryrun:
+        pd.DataFrame(rows).to_csv(realization_csv, index=False, encoding="utf-8-sig")
+        print(f"  → 已写 {realization_csv}")
+    return rows
+
+
 def _agg(excesses):
     """一组超额 → {n, win_rate_pct, avg_excess_pct}。空则 None。"""
     xs = [x for x in excesses if x is not None]
@@ -366,8 +523,15 @@ def load_for_datajs():
             "avg_excess_pct": agg["avg_excess_pct"],
             "note": "胜率=相对沪深300超额为正的窗口占比;简报本身不给买卖建议,此为客观观察",
         }
+    realization = []
+    if os.path.exists(REALIZATION_CSV):
+        rdf = pd.read_csv(REALIZATION_CSV, dtype={"code": str})
+        rdf["code"] = rdf["code"].str.zfill(6)
+        realization = rdf.where(pd.notna(rdf), None).to_dict("records")
+
     return {"signals": signals, "outcomes": outcomes, "summary": summary,
-            "lens_scorecard": lens_scorecard(signals, outcomes)}
+            "lens_scorecard": lens_scorecard(signals, outcomes),
+            "realization": realization}
 
 
 # ================================================================
@@ -380,6 +544,8 @@ if __name__ == "__main__":
 
     if "--evaluate" in args:
         evaluate_signals(dryrun=dryrun)
+    elif "--realize" in args:
+        evaluate_realization(dryrun=dryrun)
     elif "--show" in args:
         sig = _read_signals()
         print(f"信号档案 {len(sig)} 条(signals.csv):")
@@ -387,9 +553,15 @@ if __name__ == "__main__":
             print(sig.to_string(index=False))
         pack = load_for_datajs()
         if pack["summary"]:
-            print("\n成绩单:", pack["summary"])
+            print("\n价格成绩单:", pack["summary"])
+        if pack["lens_scorecard"]:
+            print("按镜头:", {k: v["overall"] for k, v in pack["lens_scorecard"].items()})
+        if pack["realization"]:
+            done = [r for r in pack["realization"] if r["status"] == "completed"]
+            print(f"假设兑现:{len(done)} 条已核(共 {len(pack['realization'])})")
     else:
         print("用法:")
-        print("  python signal_tracker.py --evaluate     对到期信号做前瞻对照,写 signal_outcomes.csv")
+        print("  python signal_tracker.py --evaluate     前瞻价格对照(沪深300超额),写 signal_outcomes.csv")
+        print("  python signal_tracker.py --realize      假设兑现核对(隐含增速/业绩红旗),写 signal_realization.csv")
         print("  python signal_tracker.py --show         打印信号档案与成绩单概览")
         print("  (快照由 push_to_sheets 发布简报时自动调用,无需手动)")
