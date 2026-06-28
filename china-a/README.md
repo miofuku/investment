@@ -47,6 +47,7 @@
 | `check_masterlist.py` | 母清单体检:抽出榜首/带红旗/超低PB等可疑票供人工核 |
 | `screen_traditional.py` | 传统行业选股:A偏便宜 / B偏稳健 / 交集,生成深挖命令 |
 | `lens_screen.py` | **价值镜头引擎**:把"价值视角"做成 `lenses/*.yaml` 声明式筛选(加视角只写 YAML、不写代码),确定性筛母清单产候选。内置 深度价值/稳健质量/格雷厄姆防御/干净复利(后者用去杠杆ROE 比值挡正邦式杠杆假象)。详见 [lenses/README.md](lenses/README.md) |
+| `market_context.py` | **全市场估值温度计**:全A股 PE/PB 中位数 + 近10年历史百分位(乐咕乐股源,非东财),给"这只票便宜"加一层"整个市场现在贵不贵"的坐标系。产 `market_context.json`,显示在前端母清单页顶部横幅。客观参照,不喊买卖 |
 | `signal_tracker.py` | **前瞻信号跟踪**:发布简报时冻结当时判断(PB/反向DCF隐含增速/红旗+锚点价),日后只用"发布之后"的行情对照(个股 vs 沪深300超额)。这是免费数据下**唯一不带幸存者偏差的成绩单**——按发布顺序逐条记录,不是事后挑赢家。详见 §9 |
 
 ### 2.2 Agent(链式 import,全留)
@@ -83,6 +84,7 @@
 | `earnings_preann.csv` | 业绩预告(前瞻红旗:首亏/预减/扭亏,进「红旗异动」与结论催化) |
 | `factor_trad_value.csv` / `factor_trad_stable.csv` | 传统行业 A/B 候选 |
 | `factor_lens_<name>.csv` / `factor_lenses.json` | 各价值镜头候选(`lens_screen.py` 产);json 为合并包,供前端/复用 |
+| `market_context.json` | 全市场估值温度计(`market_context.py` 产):全A PE/PB 中位数 + 近10年分位,供前端母清单页顶部横幅 |
 | `signals.csv` | **前瞻信号档案**(append-only,每条简报一行的当时判断快照+冻结的镜头归属)。**不可事后复原**,是成绩单的唯一真源;已有 Google Sheets『signals』表双向备份(`--backup-signals`,见 §9) |
 | `signal_outcomes.csv` | 前瞻价格对照结果(可由 `signals.csv`+行情重算,前端「信号跟踪」页数据源) |
 | `signal_realization.csv` | 假设兑现核对(新年报 vs 当时隐含增速/业绩红旗;可重算,前端「信号跟踪」页假设兑现表) |
@@ -101,7 +103,7 @@
 | 文件 | 作用 |
 |---|---|
 | `push_to_sheets.py` | 本地产出 → 写 Google Sheets + 生成 `data.js`;`--all` 刷清单、`--report` 单只入库、`--process-requests` 处理看票申请、`--eval-signals` 信号对照、`--datajs` 仅重建数据包 |
-| `index.html` | 纯静态前端(母清单 / 估值散点 / 传统候选 / **价值镜头** / 深挖简报 / 金融股 / 红旗异动 / **信号跟踪** + 看票申请框),只读 `data.js` |
+| `index.html` | 纯静态前端(母清单〔顶部含**全市场估值温度计**横幅〕/ 估值散点 / 传统候选 / **价值镜头** / 深挖简报 / 金融股 / 红旗异动 / **信号跟踪** + 看票申请框),只读 `data.js` |
 | `data.js` | 自动生成的数据包(`window.SHEET_DATA`),与 `index.html` 一起部署;**勿手改** |
 | `build_and_deploy.sh` | 一键:生成数据 → 只把 `index.html`+`data.js` 部署到 Cloudflare Pages |
 | `apps_script_requests.gs` | Google Apps Script(贴进 Sheet 的 Apps Script 部署):接收看票申请,写入 `requests` 表 |

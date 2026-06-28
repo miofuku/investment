@@ -61,29 +61,33 @@ elif [[ "$PREANN" -eq 1 ]]; then
   echo "==> [1/2] 重建 data.js(并入前瞻红旗)"
   "$PYTHON" push_to_sheets.py --datajs
 elif [[ "$DAILY" -eq 1 ]]; then
-  # 日常例程:看票申请 → 业绩预告 → 价值镜头 → 价格对照 → 假设兑现 → 信号备份 → 刷新 data.js
-  echo "==> [1/7] 日常例程:处理看票申请"
+  # 日常例程:看票申请 → 业绩预告 → 镜头 → 估值温度计 → 价格对照 → 假设兑现 → 备份 → 刷新 data.js
+  echo "==> [1/8] 日常例程:处理看票申请"
   "$PYTHON" push_to_sheets.py --process-requests
-  echo "==> [2/7] 刷新业绩预告(前瞻红旗层)"
+  echo "==> [2/8] 刷新业绩预告(前瞻红旗层)"
   "$PYTHON" earnings_preann.py || echo "  (业绩预告刷新失败,跳过,沿用旧值)"
-  echo "==> [3/7] 刷新价值镜头候选(读现成母清单,声明式筛选)"
+  echo "==> [3/8] 刷新价值镜头候选(读现成母清单,声明式筛选)"
   "$PYTHON" lens_screen.py || echo "  (价值镜头刷新失败,跳过,沿用旧值)"
-  echo "==> [4/7] 前瞻价格对照(发布以来相对沪深300表现)"
+  echo "==> [4/8] 刷新全市场估值温度计(全A PE/PB 分位)"
+  "$PYTHON" market_context.py || echo "  (估值温度计刷新失败,跳过,沿用旧值)"
+  echo "==> [5/8] 前瞻价格对照(发布以来相对沪深300表现)"
   "$PYTHON" signal_tracker.py --evaluate || echo "  (价格对照失败,跳过,沿用旧值)"
-  echo "==> [5/7] 假设兑现核对(新年报 vs 当时隐含增速/业绩红旗)"
+  echo "==> [6/8] 假设兑现核对(新年报 vs 当时隐含增速/业绩红旗)"
   "$PYTHON" signal_tracker.py --realize || echo "  (假设兑现核对失败,跳过,沿用旧值)"
-  echo "==> [6/7] 信号档案 ↔ Sheets 双向备份(防唯一不可复原产物丢失)"
+  echo "==> [7/8] 信号档案 ↔ Sheets 双向备份(防唯一不可复原产物丢失)"
   "$PYTHON" push_to_sheets.py --backup-signals || echo "  (信号备份失败,跳过,本地档案仍在)"
-  echo "==> [7/7] 刷新 data.js(简报 + 红旗 + 镜头 + 价格成绩单 + 按镜头成绩单 + 假设兑现)"
+  echo "==> [8/8] 刷新 data.js(简报 + 红旗 + 镜头 + 温度计 + 价格成绩单 + 按镜头 + 假设兑现)"
   "$PYTHON" push_to_sheets.py --datajs
 else
   # 不带业务参数时,默认刷新全部
   if [[ ${#ARGS[@]} -eq 0 ]]; then ARGS=(--all); fi
   if [[ " ${ARGS[*]} " == *" --all "* ]]; then
-    echo "==> [1/2] 刷新价值镜头候选(声明式筛选,读现成母清单)"
+    echo "==> [1/3] 刷新价值镜头候选(声明式筛选,读现成母清单)"
     "$PYTHON" lens_screen.py || echo "  (价值镜头刷新失败,跳过,沿用旧值)"
+    echo "==> [2/3] 刷新全市场估值温度计(全A PE/PB 分位)"
+    "$PYTHON" market_context.py || echo "  (估值温度计刷新失败,跳过,沿用旧值)"
   fi
-  echo "==> [2/2] 本地生成(写 Google Sheets + data.js):push_to_sheets.py ${ARGS[*]}"
+  echo "==> [3/3] 本地生成(写 Google Sheets + data.js):push_to_sheets.py ${ARGS[*]}"
   "$PYTHON" push_to_sheets.py "${ARGS[@]}"
 fi
 

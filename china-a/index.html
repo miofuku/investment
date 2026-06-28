@@ -191,6 +191,7 @@ td.num{text-align:right}
 
 <!-- ══ 母清单 ══ -->
 <div class="page active" id="page-masterlist">
+  <div id="market-context" style="margin-bottom:12px"></div>
   <div class="toolbar">
     <input type="text" id="ml-search" placeholder="搜索代码 / 名称…" oninput="renderMasterlist()">
     <select id="ml-industry" onchange="renderMasterlist()"><option value="">全部行业</option></select>
@@ -415,6 +416,33 @@ function showPage(name) {
   document.getElementById('page-'+name).classList.add('active');
   event.currentTarget.classList.add('active');
   if (name === 'scatter') setTimeout(drawScatter, 50);
+}
+
+// ══════════════════════════════════════════
+// 全市场估值温度计(给"便宜"一个坐标系)
+// ══════════════════════════════════════════
+function renderMarketContext() {
+  const el = document.getElementById('market-context');
+  if (!el) return;
+  const m = DATA.market_context || {};
+  if (m.pe_ttm_median == null && m.pb_median == null) { el.innerHTML = ''; return; }
+  // 分位越低=整体越便宜(绿);越高=越贵(红)
+  const chip = (label, val, pct) => {
+    if (val == null) return '';
+    let color = 'var(--muted)', tag = '分位未知';
+    const p = num(pct);
+    if (p != null) {
+      color = p < 35 ? '#00a878' : (p > 70 ? '#e53e3e' : '#b45309');
+      const word = p < 35 ? '偏低·整体便宜' : (p > 70 ? '偏高·整体偏贵' : '居中');
+      tag = `近10年 <span style="color:${color};font-weight:600">${p.toFixed(0)}% 分位</span>（${word}）`;
+    }
+    return `<span style="margin-right:18px">${label} 中位数 <span style="font-family:var(--mono);color:var(--text)">${num(val).toFixed(2)}</span> · ${tag}</span>`;
+  };
+  el.innerHTML = `<div style="padding:10px 16px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;font-size:12px;color:var(--muted);line-height:1.6">
+    <strong style="color:var(--text)">全市场估值温度计</strong>（全A股，${m.as_of||'—'}）：
+    ${chip('PE(TTM)', m.pe_ttm_median, m.pe_pctile_10y)}${chip('PB', m.pb_median, m.pb_pctile_10y)}
+    <span style="color:var(--muted)">— 给"这只票便宜"加一层"整个市场现在贵不贵"的背景；客观参照,不构成买卖建议。</span>
+  </div>`;
 }
 
 // ══════════════════════════════════════════
@@ -1309,6 +1337,7 @@ async function init() {
   DATA.signal_summary = d.signal_summary || {};
   DATA.lens_scorecard = d.lens_scorecard || {};
   DATA.realization = d.realization || [];
+  DATA.market_context = d.market_context || {};
   DATA.lenses      = d.lenses      || {};
 
   computeIndustryRanks(DATA.masterlist);   // 行业内综合排名 + 样本数(给结论/排名列用)
@@ -1325,6 +1354,7 @@ async function init() {
     return;
   }
 
+  renderMarketContext();
   initMasterlist();
   // 金融股行业筛选下拉
   const finSel = document.getElementById('fin-sector');

@@ -416,9 +416,11 @@ def generate_data_js(ml, tr, fi, reports=None, out_path="data.js"):
     rp = reports or []
     sig = _load_signal_pack()                                         # 前瞻信号跟踪(诚实成绩单)
     lenses = _load_lenses_pack()                                      # 价值镜头(声明式筛选候选)
+    mkt = _load_market_context()                                      # 全市场估值温度计
     payload = {
         "generated": TODAY,
         "request_endpoint": os.environ.get("REQUEST_ENDPOINT", ""),   # 来自 .env,前端看票申请用
+        "market_context": clean(mkt),
         "masterlist":  clean(ml),
         "traditional": clean(tr),
         "financials":  clean(fi),
@@ -510,6 +512,16 @@ def _load_lenses_pack(path="factor_lenses.json"):
             return json.load(f)
     except Exception as e:
         print(f"  [价值镜头] 读取失败(data.js 不含镜头):{type(e).__name__}: {e}")
+        return {}
+
+
+def _load_market_context():
+    """读全市场估值温度计(market_context.py 产)供 data.js。缺失/异常返回空 dict。"""
+    try:
+        from market_context import load
+        return load()
+    except Exception as e:
+        print(f"  [估值温度计] 读取失败(data.js 不含温度计):{type(e).__name__}: {e}")
         return {}
 
 
