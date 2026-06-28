@@ -83,7 +83,7 @@
 | `earnings_preann.csv` | 业绩预告(前瞻红旗:首亏/预减/扭亏,进「红旗异动」与结论催化) |
 | `factor_trad_value.csv` / `factor_trad_stable.csv` | 传统行业 A/B 候选 |
 | `factor_lens_<name>.csv` / `factor_lenses.json` | 各价值镜头候选(`lens_screen.py` 产);json 为合并包,供前端/复用 |
-| `signals.csv` | **前瞻信号档案**(append-only,每条简报一行的当时判断快照)。**不可事后复原**,是成绩单的唯一真源——见 §9 的耐久性提示 |
+| `signals.csv` | **前瞻信号档案**(append-only,每条简报一行的当时判断快照+冻结的镜头归属)。**不可事后复原**,是成绩单的唯一真源;已有 Google Sheets『signals』表双向备份(`--backup-signals`,见 §9) |
 | `signal_outcomes.csv` | 信号对照结果(可由 `signals.csv`+行情重算,前端「信号跟踪」页数据源) |
 
 ### 2.5 可删(一次性探针 + 旧版本)
@@ -290,8 +290,13 @@ python signal_tracker.py --evaluate      # 对到期信号做前瞻对照,写 si
 - **快照是自动的**:`push_to_sheets.py --report`(及看票申请处理)发布简报时自动调 `snapshot_signal`,无需手动。
 - 前端新增「**信号跟踪**」页:概览卡(在档数/已到期/跑赢沪深300占比/平均超额)+ 明细表(隐含增速/PB/个股/沪深300/超额/状态)。
 
-**⚠ 耐久性提示(需你决定):** `*.csv` 已被 `.gitignore` 忽略,`signals.csv` 因此**不进 git 也不上传**。
-但它是**不可复原**的档案(`signal_outcomes.csv` 可重算,`signals.csv` 不行)。当前仅存本机一份。
-若要防丢,建议把它接入既有的 Google Sheets 备份链路(像 `reports` 表那样另起一张 `signals` 表)——
-这一步尚未做,因为是否要把成绩单也同步到 Sheets 是产品取舍,留给你拍板。
+**耐久性:Sheets 双向备份(已落地)。** `signals.csv` 是唯一**不可复原**的产物(`signal_outcomes.csv` 可重算)。
+`push_to_sheets.py --backup-signals` 在 本地 `signals.csv` ↔ Google Sheets『signals』表 间按 `(code, signal_date)` 取并集:
+**已存在的键以 Sheet 为准**(档案不可变,防本地误清空覆盖云端),本地仅新增 Sheet 没有的行;合并结果写回两边
+→ **本地若丢失会自动从云端恢复**。发布单只简报、处理看票申请、`--eval-signals`、`--daily` 都会自动备份。
+
+**按镜头成绩单(已落地)。** 发布时一并**冻结当时命中的价值镜头归属**(`signals.csv` 的 `lenses` 列,读 `factor_lenses.json`)。
+日后 `lens_scorecard` 按这份**冻结归属**(而非事后归属,避免会员漂移的前视偏差)拆分同口径超额:
+每个镜头的"已到期窗口数 / 跑赢沪深300占比 / 平均超额",注入 data.js,显示在前端「价值镜头」页每个镜头的描述下方。
+这是同时拥有"镜头"与"信号跟踪"的复利红利:**哪种价值视角的候选,事后表现更好**。
 

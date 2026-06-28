@@ -70,6 +70,7 @@ SH = {
     "reports":     "reports",
     "financials":  "financials",
     "requests":    "requests",
+    "signals":     "signals",     # 前瞻信号档案的耐久备份(唯一不可复原的产物)
 }
 
 TODAY = dt.date.today().strftime("%Y-%m-%d")
@@ -425,6 +426,7 @@ def generate_data_js(ml, tr, fi, reports=None, out_path="data.js"):
         "signals":     clean(sig.get("signals", [])),
         "outcomes":    clean(sig.get("outcomes", [])),
         "signal_summary": clean(sig.get("summary", {})),
+        "lens_scorecard": clean(sig.get("lens_scorecard", {})),
         "lenses":      clean(lenses),
     }
     js = f"// 自动生成,勿手动编辑。由 push_to_sheets.py 生成于 {TODAY}\n"
@@ -445,6 +447,57 @@ def _load_signal_pack():
     except Exception as e:
         print(f"  [信号跟踪] 读取失败(data.js 不含信号):{type(e).__name__}: {e}")
         return {"signals": [], "outcomes": [], "summary": {}}
+
+
+def sync_signals(dryrun=False):
+    """把前瞻信号档案在 本地 signals.csv ↔ Google Sheets『signals』表 之间双向合并。
+    动机:signals.csv 是唯一**不可复原**的产物(锚点价之外的 PB/隐含增速/镜头归属是发布当时的快照)。
+    合并规则:按 (code, signal_date) 取并集;**已存在的键以 Sheet 为准**(档案不可变,防本地误改/清空覆盖云端),
+    本地仅新增 Sheet 没有的行。合并结果同时写回 Sheet 与本地 → 本地若丢失会自动从云端恢复。需联网。"""
+    from signal_tracker import _read_signals, write_signals, SIGNAL_COLS
+
+    local = _read_signals()
+    local_recs = local.where(pd.notna(local), "").to_dict("records") if not local.empty else []
+
+    sheet_recs = []
+    try:
+        ss = _connect()
+        try:
+            ws = ss.worksheet(SH["signals"])
+            sheet_recs = ws.get_all_records()
+            for r in sheet_recs:
+                if "code" in r:
+                    r["code"] = str(r["code"]).zfill(6)
+        except WorksheetNotFound:
+            ws = None
+    except Exception as e:
+        print(f"  [信号备份] 连不上 Sheets,跳过(本地档案不受影响):{type(e).__name__}: {e}")
+        return
+
+    def _key(r):
+        return (str(r.get("code", "")).zfill(6), str(r.get("signal_date", "")))
+
+    merged, seen = [], set()
+    for r in sheet_recs:                          # Sheet 优先(不可变档案权威源)
+        k = _key(r)
+        if k not in seen and k[0]:
+            seen.add(k); merged.append(r)
+    new_local = 0
+    for r in local_recs:                          # 本地仅补 Sheet 没有的新快照
+        k = _key(r)
+        if k not in seen and k[0]:
+            seen.add(k); merged.append(r); new_local += 1
+
+    # 规整列 + 排序(发布日)
+    norm = [{c: r.get(c, "") for c in SIGNAL_COLS} for r in merged]
+    norm.sort(key=lambda r: str(r.get("signal_date", "")))
+
+    print(f"  [信号备份] Sheet {len(sheet_recs)} + 本地新增 {new_local} → 合并 {len(norm)} 条")
+    if dryrun:
+        return
+    upsert_sheet(SH["signals"], norm, key_cols=("code", "signal_date"), dryrun=False)
+    restored = write_signals(norm)                # 合并结果写回本地(本地丢失→自动恢复)
+    print(f"  [信号备份] 已同步:Sheet ←→ 本地 signals.csv({restored} 条)")
 
 
 def _load_lenses_pack(path="factor_lenses.json"):
@@ -566,6 +619,7 @@ def push_report(code, dryrun=False, rebuild=True):
         print(f"  ✓ {code} 简报已入库 reports Sheet(date={TODAY})")
         _snapshot_signal_safe(rec, meta)     # 前瞻信号跟踪:冻结当时判断(失败不阻断发布)
         if rebuild:                          # 批量处理时跳过,末尾统一重建
+            _sync_signals_safe()             # 单只发布即备份到 Sheets(批量时末尾统一备份)
             _rebuild_data_js()
     return True
 
@@ -577,6 +631,14 @@ def _snapshot_signal_safe(rec, meta):
         snapshot_signal(rec, meta=meta)
     except Exception as e:
         print(f"  [信号跟踪] 快照失败(不影响发布):{type(e).__name__}: {e}")
+
+
+def _sync_signals_safe():
+    """把信号档案双向同步到 Sheets 备份。任何异常都不应影响主流程(本地档案仍在)。"""
+    try:
+        sync_signals(dryrun=False)
+    except Exception as e:
+        print(f"  [信号备份] 同步失败(不影响主流程,本地档案仍在):{type(e).__name__}: {e}")
 
 
 def _read_reports_from_sheets():
@@ -672,6 +734,7 @@ def process_requests(dryrun=False):
         else:
             done.append(code)
     if not dryrun and done:
+        _sync_signals_safe()                # 批量结束后统一备份新增信号到 Sheets
         _rebuild_data_js()                  # 批量结束后统一重建一次 data.js
     print(f"  完成 {len(done)} 条:{done or '无'}")
     return done
@@ -694,6 +757,7 @@ if __name__ == "__main__":
         print("  python push_to_sheets.py --datajs           仅重新生成data.js")
         print("  python push_to_sheets.py --process-requests 处理用户提交的看票申请(requests表)")
         print("  python push_to_sheets.py --eval-signals     前瞻信号对照(沪深300超额)→ 重建data.js")
+        print("  python push_to_sheets.py --backup-signals   信号档案 ↔ Sheets 双向同步(备份/恢复)")
         print("  任何命令加 --dryrun 只打印不写入")
         sys.exit(0)
 
@@ -720,7 +784,12 @@ if __name__ == "__main__":
         from signal_tracker import evaluate_signals
         evaluate_signals(dryrun=dryrun)
         if not dryrun:
+            _sync_signals_safe()            # 顺带把档案备份到 Sheets
             _rebuild_data_js()              # 把最新对照结果并入 data.js
+
+    elif "--backup-signals" in args:
+        print("=== 信号档案 ↔ Sheets 双向同步(备份/恢复)===")
+        sync_signals(dryrun=dryrun)
 
     elif "--datajs" in args:
         print("=== 重新生成 data.js ===")

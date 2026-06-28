@@ -34,6 +34,7 @@ signal_tracker.py — 前瞻信号跟踪(唯一诚实的"业绩档案",不是回
 """
 
 import os
+import json
 import math
 import datetime as dt
 
@@ -54,7 +55,9 @@ HORIZONS = {"1q": 63, "2q": 126, "1y": 252}
 BENCHMARK = "sh000300"                  # 沪深300(新浪源)
 
 SIGNAL_COLS = ["code", "name", "industry", "signal_date", "anchor_price",
-               "pb", "roe_3y", "roic_3y", "implied_g", "major_flags"]
+               "pb", "roe_3y", "roic_3y", "implied_g", "major_flags", "lenses"]
+
+LENSES_JSON = "factor_lenses.json"   # lens_screen.py 产;发布时据此冻结"当时镜头归属"
 
 
 # ================================================================
@@ -137,7 +140,39 @@ def _read_signals():
         return pd.DataFrame(columns=SIGNAL_COLS)
     df = pd.read_csv(SIGNALS_CSV, dtype={"code": str})
     df["code"] = df["code"].str.zfill(6)
+    for c in SIGNAL_COLS:                      # 旧档案可能缺新列(如 lenses),补空保持兼容
+        if c not in df.columns:
+            df[c] = ""
     return df
+
+
+def write_signals(records, signals_csv=SIGNALS_CSV):
+    """把信号记录列表写回 signals.csv(列对齐 SIGNAL_COLS)。供从 Sheets 恢复本地档案。"""
+    if not records:
+        return 0
+    df = pd.DataFrame(records)
+    df["code"] = df["code"].astype(str).str.zfill(6)
+    for c in SIGNAL_COLS:
+        if c not in df.columns:
+            df[c] = ""
+    df[SIGNAL_COLS].to_csv(signals_csv, index=False, encoding="utf-8-sig")
+    return len(df)
+
+
+def _lens_membership(code, path=LENSES_JSON):
+    """该 code 当前命中哪些价值镜头(读 factor_lenses.json)。返回逗号串,缺失则空。
+    发布时调用 → 冻结"当时镜头归属",日后做按镜头的诚实成绩单,避免镜头会员事后漂移。"""
+    if not os.path.exists(path):
+        return ""
+    try:
+        with open(path, encoding="utf-8") as f:
+            packs = json.load(f)
+    except Exception:
+        return ""
+    code = str(code).zfill(6)
+    hit = [name for name, pk in packs.items()
+           if any(str(c.get("code")).zfill(6) == code for c in pk.get("candidates", []))]
+    return ",".join(hit)
 
 
 def snapshot_signal(rec, meta=None, signals_csv=SIGNALS_CSV):
@@ -176,6 +211,7 @@ def snapshot_signal(rec, meta=None, signals_csv=SIGNALS_CSV):
         "implied_g": _num(meta.get("implied_g")),
         "major_flags": (rec.get("major_flags") or
                         ", ".join(meta.get("major_flags") or []) or ""),
+        "lenses": _lens_membership(code),       # 冻结当时命中的价值镜头(供按镜头成绩单)
     }
     new = pd.DataFrame([row])
     out = (new if df.empty else pd.concat([df, new], ignore_index=True))[SIGNAL_COLS]
@@ -263,9 +299,53 @@ def evaluate_signals(horizons=HORIZONS, dryrun=False, outcomes_csv=OUTCOMES_CSV)
 # ================================================================
 # 给前端 data.js 用:信号档案 + 最新对照,合成一张可读表
 # ================================================================
+def _agg(excesses):
+    """一组超额 → {n, win_rate_pct, avg_excess_pct}。空则 None。"""
+    xs = [x for x in excesses if x is not None]
+    if not xs:
+        return None
+    wins = sum(1 for x in xs if x > 0)
+    return {"n": len(xs),
+            "win_rate_pct": round(wins / len(xs) * 100, 1),
+            "avg_excess_pct": round(sum(xs) / len(xs), 2)}
+
+
+def lens_scorecard(signals, outcomes):
+    """按"发布时冻结的镜头归属"聚合前瞻超额 → 每个镜头的诚实成绩单。
+    用冻结的 lenses 标签(非当前归属)避免事后会员漂移造成的前视偏差。
+    返回 {lens_name: {overall:{...}, by_horizon:{hz:{...}}}}。"""
+    # (code, signal_date) → 冻结的镜头标签列表
+    tag = {}
+    for s in signals:
+        key = (str(s.get("code")).zfill(6), str(s.get("signal_date")))
+        raw = s.get("lenses") or ""
+        tag[key] = [t for t in str(raw).split(",") if t.strip()]
+
+    # lens → list[(horizon, excess)],仅 completed
+    bucket = {}
+    for o in outcomes:
+        if o.get("status") != "completed" or o.get("excess_pct") is None:
+            continue
+        key = (str(o.get("code")).zfill(6), str(o.get("signal_date")))
+        for lz in tag.get(key, []):
+            bucket.setdefault(lz, []).append((o.get("horizon"), o["excess_pct"]))
+
+    out = {}
+    for lz, pairs in bucket.items():
+        overall = _agg([x for _, x in pairs])
+        by_h = {}
+        for hname in HORIZONS:
+            agg = _agg([x for h, x in pairs if h == hname])
+            if agg:
+                by_h[hname] = agg
+        out[lz] = {"overall": overall, "by_horizon": by_h}
+    return out
+
+
 def load_for_datajs():
-    """返回 {"signals":[...], "outcomes":[...], "summary":{...}} 供 push_to_sheets 注入 data.js。
-    summary:已到期窗口的胜率(超额>0 占比)与平均超额——诚实成绩单,无数据则为空。"""
+    """返回 {signals, outcomes, summary, lens_scorecard} 供 push_to_sheets 注入 data.js。
+    summary:已到期窗口的胜率(超额>0 占比)与平均超额——诚实成绩单,无数据则为空。
+    lens_scorecard:按发布时冻结的镜头归属拆分的同口径成绩单。"""
     sig = _read_signals()
     signals = sig.where(pd.notna(sig), None).to_dict("records") if not sig.empty else []
 
@@ -279,14 +359,15 @@ def load_for_datajs():
             and o.get("excess_pct") is not None]
     summary = {}
     if comp:
-        wins = sum(1 for o in comp if o["excess_pct"] > 0)
+        agg = _agg([o["excess_pct"] for o in comp])
         summary = {
-            "n_completed": len(comp),
-            "win_rate_pct": round(wins / len(comp) * 100, 1),
-            "avg_excess_pct": round(sum(o["excess_pct"] for o in comp) / len(comp), 2),
+            "n_completed": agg["n"],
+            "win_rate_pct": agg["win_rate_pct"],
+            "avg_excess_pct": agg["avg_excess_pct"],
             "note": "胜率=相对沪深300超额为正的窗口占比;简报本身不给买卖建议,此为客观观察",
         }
-    return {"signals": signals, "outcomes": outcomes, "summary": summary}
+    return {"signals": signals, "outcomes": outcomes, "summary": summary,
+            "lens_scorecard": lens_scorecard(signals, outcomes)}
 
 
 # ================================================================

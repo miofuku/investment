@@ -1122,8 +1122,21 @@ function renderLenses() {
   }).join('');
 
   const lens = lenses[LENS_ACTIVE];
+  // 该镜头的前瞻成绩单(按发布时冻结的镜头归属统计,非事后归属)
+  const sc = (DATA.lens_scorecard || {})[LENS_ACTIVE];
+  let scLine = '';
+  if (sc && sc.overall && sc.overall.n) {
+    const wr = num(sc.overall.win_rate_pct), ae = num(sc.overall.avg_excess_pct);
+    const wrColor = wr>=50?'#00a878':'#e53e3e', aeColor = ae>0?'#00a878':'#e53e3e';
+    scLine = `<div style="margin-top:6px">📊 前瞻成绩单(${sc.overall.n} 个已到期窗口):
+      跑赢沪深300 <span style="color:${wrColor};font-weight:600">${wr.toFixed(0)}%</span> ·
+      平均超额 <span style="color:${aeColor};font-weight:600">${ae>0?'+':''}${ae.toFixed(2)}%</span>
+      <span style="color:var(--muted)">（按发布当时冻结的镜头归属统计，非事后归属；简报不给买卖建议，此为客观观察）</span></div>`;
+  } else {
+    scLine = `<div style="margin-top:6px;color:var(--muted)">📊 前瞻成绩单:暂无已到期窗口（发布简报满 1 季后开始累积）</div>`;
+  }
   document.getElementById('lens-desc').innerHTML =
-    `<strong style="color:var(--text)">${lens.display_name||LENS_ACTIVE}</strong> — ${lens.description||''}`;
+    `<strong style="color:var(--text)">${lens.display_name||LENS_ACTIVE}</strong> — ${lens.description||''}${scLine}`;
 
   const q = (document.getElementById('lens-search')?.value || '').toLowerCase();
   let rows = (lens.candidates || []).filter(r =>
@@ -1225,6 +1238,7 @@ async function init() {
   DATA.signals     = d.signals     || [];
   DATA.outcomes    = d.outcomes    || [];
   DATA.signal_summary = d.signal_summary || {};
+  DATA.lens_scorecard = d.lens_scorecard || {};
   DATA.lenses      = d.lenses      || {};
 
   computeIndustryRanks(DATA.masterlist);   // 行业内综合排名 + 样本数(给结论/排名列用)

@@ -61,16 +61,18 @@ elif [[ "$PREANN" -eq 1 ]]; then
   echo "==> [1/2] 重建 data.js(并入前瞻红旗)"
   "$PYTHON" push_to_sheets.py --datajs
 elif [[ "$DAILY" -eq 1 ]]; then
-  # 日常例程:看票申请 → 业绩预告 → 价值镜头 → 前瞻信号对照 → 刷新 data.js
-  echo "==> [1/5] 日常例程:处理看票申请"
+  # 日常例程:看票申请 → 业绩预告 → 价值镜头 → 信号对照 → 信号备份 → 刷新 data.js
+  echo "==> [1/6] 日常例程:处理看票申请"
   "$PYTHON" push_to_sheets.py --process-requests
-  echo "==> [2/5] 刷新业绩预告(前瞻红旗层)"
+  echo "==> [2/6] 刷新业绩预告(前瞻红旗层)"
   "$PYTHON" earnings_preann.py || echo "  (业绩预告刷新失败,跳过,沿用旧值)"
-  echo "==> [3/5] 刷新价值镜头候选(读现成母清单,声明式筛选)"
+  echo "==> [3/6] 刷新价值镜头候选(读现成母清单,声明式筛选)"
   "$PYTHON" lens_screen.py || echo "  (价值镜头刷新失败,跳过,沿用旧值)"
-  echo "==> [4/5] 前瞻信号对照(发布以来相对沪深300表现)"
+  echo "==> [4/6] 前瞻信号对照(发布以来相对沪深300表现)"
   "$PYTHON" signal_tracker.py --evaluate || echo "  (信号对照失败,跳过,沿用旧值)"
-  echo "==> [5/5] 刷新 data.js(同步 Sheets 最新简报 + 前瞻红旗 + 镜头 + 信号成绩单)"
+  echo "==> [5/6] 信号档案 ↔ Sheets 双向备份(防唯一不可复原产物丢失)"
+  "$PYTHON" push_to_sheets.py --backup-signals || echo "  (信号备份失败,跳过,本地档案仍在)"
+  echo "==> [6/6] 刷新 data.js(简报 + 前瞻红旗 + 镜头 + 信号成绩单 + 按镜头成绩单)"
   "$PYTHON" push_to_sheets.py --datajs
 else
   # 不带业务参数时,默认刷新全部
