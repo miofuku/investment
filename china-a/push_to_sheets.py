@@ -561,10 +561,10 @@ def push_report(code, dryrun=False, rebuild=True):
     import subprocess
     print(f"=== push_report {code} {'[DRYRUN]' if dryrun else ''} ===")
 
-    # 调 agent 生成简报(复用现有脚本)
-    print("  生成简报中(调 agent_step8)...")
+    # 调 agent 生成简报(复用现有脚本;step9=链条最新,含全部14工具)
+    print("  生成简报中(调 agent_step9)...")
     result = subprocess.run(
-        [sys.executable, "agent_step8_block_trade.py", str(code)],
+        [sys.executable, "agent_step9_dividend_durability.py", str(code)],
         capture_output=True, text=True, encoding="utf-8",
         cwd=os.path.dirname(os.path.abspath(__file__))  # 确保工作目录正确
     )

@@ -26,7 +26,7 @@
                                       ↓
               传统行业筛选(A偏便宜 / B偏稳健 / 交集)   ← 候选缩小
                                       ↓
-              13工具 GLM agent 逐只深挖 → 九节简报      ← 价值深度
+              14工具 GLM agent 逐只深挖 → 九节简报      ← 价值深度
                                       ↓
                             你的判断 = 最终决策
 ```
@@ -52,8 +52,8 @@
 
 ### 2.2 Agent(链式 import,全留)
 
-`agent_step1` → `step2` → `step3` → `step4` → `step5` → `step6` → `step7` → `step8`,
-**后一个 import 前一个的全部工具。日常只跑 `agent_step8_block_trade.py`(它含全部13工具)**,但前面 7 个都不能删。
+`agent_step1` → `step2` → … → `step8` → `step9`,
+**后一个 import 前一个的全部工具。日常只跑 `agent_step9_dividend_durability.py`(它含全部14工具)**,但前面 8 个都不能删。
 
 | 文件 | 新增工具 |
 |---|---|
@@ -64,7 +64,8 @@
 | `agent_step5_capital_flow.py` | 资金面:质押/增减持/解禁/股东人数 |
 | `agent_step6_dividend.py` | 分红历史(连续年数/支付率/股息率) |
 | `agent_step7_roic.py` | ROIC(剔杠杆失真,含失真护栏) |
-| `agent_step8_block_trade.py` | 大宗交易(折价=出货信号)— **最新,含全部13工具+run_agent** |
+| `agent_step8_block_trade.py` | 大宗交易(折价=出货信号)+ run_agent/meta |
+| `agent_step9_dividend_durability.py` | **分红可持续性**(大秦教训:ROIC趋势+资本开支趋势+FCF覆盖+分红趋势 交叉核对)— **最新,含全部14工具+run_agent** |
 
 ### 2.3 缓存(必留,删了要重拉数小时)
 
@@ -95,7 +96,7 @@
 - 旧版本:`a_share_universe.py` / `_v2.py`、`step3_factor_engine.py` / `step3b_*.py`
 - 中间CSV:`factor_baijiu*` / `factor_房地产*` / `factor_smoke*`
 
-> **删除前先确认** `python step4c_magic_formula.py` 与 `python agent_step8_block_trade.py 600519` 都能跑通。
+> **删除前先确认** `python step4c_magic_formula.py` 与 `python agent_step9_dividend_durability.py 600519` 都能跑通。
 > 建议把"可删"挪进 `archive/` 而非硬删,确认一周无碍再清。
 
 ### 2.6 发布层(Web 前端 + 部署,见 §4)
@@ -137,7 +138,8 @@ python lens_screen.py --list          # 列出可用镜头
 
 ### 单只深挖(产九节简报)
 ```bash
-python agent_step8_block_trade.py 601006    # 换成任意6位代码
+python agent_step9_dividend_durability.py 601006          # 完整14工具简报,换成任意6位代码
+python agent_step9_dividend_durability.py --tool 601006   # 只单测分红可持续性工具(大秦)
 ```
 
 ---
@@ -198,7 +200,7 @@ Pages 站点默认公开。用 **Cloudflare Access**(Zero Trust,免费 ≤50 人
 
 ---
 
-## 5. 十三个工具(agent 深挖时调用)
+## 5. 十四个工具(agent 深挖时调用)
 
 | # | 工具 | 客观信号 |
 |---|---|---|
@@ -215,8 +217,9 @@ Pages 站点默认公开。用 **Cloudflare Access**(Zero Trust,免费 ≤50 人
 | 11 | get_dividend_history | 连续分红年数 / 平均支付率 / 股息率 |
 | 12 | get_roic_3y | ROIC(剔杠杆失真,失真时诚实标注不可信) |
 | 13 | get_block_trades | 近3月大宗笔数 / 折溢率 / 大幅折价 |
+| 14 | get_dividend_durability | 分红可持续性:ROIC趋势+资本开支趋势+FCF对(分红+利息)覆盖+分红趋势 交叉核对(大秦教训) |
 
-**九节简报:** 公司快照 · 质量(ROE+ROIC) · 估值PB · 反向DCF · 深度排雷 · 定性(护城河/监管/互动易) · 资金面(质押/增减持/解禁/股东数/大宗) · 分红 · 综合(摊开假设,不下买卖结论)。
+**九节简报:** 公司快照 · 质量(ROE+ROIC) · 估值PB · 反向DCF · 深度排雷 · 定性(护城河/监管/互动易) · 资金面(质押/增减持/解禁/股东数/大宗) · 分红(含可持续性核对) · 综合(摊开假设,不下买卖结论)。
 
 ---
 
@@ -237,7 +240,7 @@ Pages 站点默认公开。用 **Cloudflare Access**(Zero Trust,免费 ≤50 人
 - 正邦:虚高ROE 66%(重整压低净资产)→ ROIC 揭穿;ROIC遇重整一次性利得 → 失真护栏返回 null
 - 中国建筑:PB 0.38 价值陷阱 → EV修正(真实EV是市值3.8倍)+应收占净资产85% 拆穿
 - 江苏金租:金融股口径不适用 → 母清单隔离 + agent 自我识别
-- 大秦铁路:经典"高股息现金奶牛"故事 → ROIC腰斩+资本开支暴增+分红砍71% 三信号证伪
+- 大秦铁路:经典"高股息现金奶牛"故事 → ROIC腰斩+资本开支暴增+分红砍71% 三信号证伪。**已固化为确定性工具** `get_dividend_durability`(step9):实测 ROIC 13.7%→5.1%、资本开支 71亿→272亿、FCF 仅覆盖分红+利息的 0.05 倍 → verdict「大秦式信号」;茅台等健康分红(覆盖≈1、ROIC稳、资本开支降)不误报
 
 ---
 
