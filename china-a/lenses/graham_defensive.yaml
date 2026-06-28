@@ -1,0 +1,18 @@
+name: graham_defensive
+display_name: 格雷厄姆防御(资产负债表生存)
+description: 偏向"资产负债表能扛事"的深度价值:低PB + 低负债 + 现金流为正 + 零红旗。
+rationale: |
+  在找什么:格雷厄姆式防御——便宜(低PB)且账上扛得住(负债低、现金流为正、无红旗)。
+  比「深度价值」更严:不止剔最差,而是要求生存力本身过关,宁可少而稳。
+  最怕什么:低PB 的资产质量虚高(应收/存货/商誉灌水)。PB 只是入口,真实 EV 与三表排雷必须看 agent。
+  怎么读:全市场(不限传统行业)。命中数可能很少;这正是"防御"的本意——宁缺毋滥。
+
+# 不设 industry_group → 全市场
+filters:
+  - {field: pb,     op: le, value: 1.5}    # 低PB入口(注意:低PB≠便宜,警惕资产虚高)
+  - {field: 负债率, op: le, value: 50}     # 资产负债表扛得住
+  - {field: CFQ_w,  op: ge, value: 0.5}    # 现金流真实造血
+exclude_flags: any                          # 零红旗
+rank_by: pb                                 # 越便宜越前
+ascending: true
+top_n: 40

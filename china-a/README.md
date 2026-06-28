@@ -46,6 +46,8 @@
 | `earnings_preann.py` | 业绩预告(前瞻红旗层):全市场一次取公司强制预披露(首亏/预减/扭亏…),补「所有因子都向后看」的盲点,产 `earnings_preann.csv`。负向并入母清单红旗、正向作结论催化 |
 | `check_masterlist.py` | 母清单体检:抽出榜首/带红旗/超低PB等可疑票供人工核 |
 | `screen_traditional.py` | 传统行业选股:A偏便宜 / B偏稳健 / 交集,生成深挖命令 |
+| `lens_screen.py` | **价值镜头引擎**:把"价值视角"做成 `lenses/*.yaml` 声明式筛选(加视角只写 YAML、不写代码),确定性筛母清单产候选。内置 深度价值/稳健质量/格雷厄姆防御/干净复利(后者用去杠杆ROE 比值挡正邦式杠杆假象)。详见 [lenses/README.md](lenses/README.md) |
+| `signal_tracker.py` | **前瞻信号跟踪**:发布简报时冻结当时判断(PB/反向DCF隐含增速/红旗+锚点价),日后只用"发布之后"的行情对照(个股 vs 沪深300超额)。这是免费数据下**唯一不带幸存者偏差的成绩单**——按发布顺序逐条记录,不是事后挑赢家。详见 §9 |
 
 ### 2.2 Agent(链式 import,全留)
 
@@ -80,6 +82,9 @@
 | `bank_scorecard.csv` | 金融股备查评分卡(看板「金融股」页数据源) |
 | `earnings_preann.csv` | 业绩预告(前瞻红旗:首亏/预减/扭亏,进「红旗异动」与结论催化) |
 | `factor_trad_value.csv` / `factor_trad_stable.csv` | 传统行业 A/B 候选 |
+| `factor_lens_<name>.csv` / `factor_lenses.json` | 各价值镜头候选(`lens_screen.py` 产);json 为合并包,供前端/复用 |
+| `signals.csv` | **前瞻信号档案**(append-only,每条简报一行的当时判断快照)。**不可事后复原**,是成绩单的唯一真源——见 §9 的耐久性提示 |
+| `signal_outcomes.csv` | 信号对照结果(可由 `signals.csv`+行情重算,前端「信号跟踪」页数据源) |
 
 ### 2.5 可删(一次性探针 + 旧版本)
 
@@ -94,8 +99,8 @@
 
 | 文件 | 作用 |
 |---|---|
-| `push_to_sheets.py` | 本地产出 → 写 Google Sheets + 生成 `data.js`;`--all` 刷清单、`--report` 单只入库、`--process-requests` 处理看票申请、`--datajs` 仅重建数据包 |
-| `index.html` | 纯静态前端(母清单 / 估值散点 / 传统候选 / 深挖简报 + 看票申请框),只读 `data.js` |
+| `push_to_sheets.py` | 本地产出 → 写 Google Sheets + 生成 `data.js`;`--all` 刷清单、`--report` 单只入库、`--process-requests` 处理看票申请、`--eval-signals` 信号对照、`--datajs` 仅重建数据包 |
+| `index.html` | 纯静态前端(母清单 / 估值散点 / 传统候选 / **价值镜头** / 深挖简报 / 金融股 / 红旗异动 / **信号跟踪** + 看票申请框),只读 `data.js` |
 | `data.js` | 自动生成的数据包(`window.SHEET_DATA`),与 `index.html` 一起部署;**勿手改** |
 | `build_and_deploy.sh` | 一键:生成数据 → 只把 `index.html`+`data.js` 部署到 Cloudflare Pages |
 | `apps_script_requests.gs` | Google Apps Script(贴进 Sheet 的 Apps Script 部署):接收看票申请,写入 `requests` 表 |
@@ -120,8 +125,12 @@ python step4c_magic_formula.py
 ### 选票
 ```bash
 python check_masterlist.py            # 母清单整体体检
-python screen_traditional.py          # 传统行业 A/B/交集 候选
+python screen_traditional.py          # 传统行业 A/B/交集 候选(硬编码版)
+python lens_screen.py                 # 价值镜头:声明式筛选(lenses/*.yaml),产 factor_lens_*.csv
+python lens_screen.py --list          # 列出可用镜头
 ```
+> `lens_screen.py` 是 `screen_traditional.py` 的声明式泛化:深度价值/稳健质量两镜头≈旧 A/B 表,
+> 另加全市场的 格雷厄姆防御 / 干净复利。新视角只写一个 YAML(见 [lenses/README.md](lenses/README.md))。两者暂并存。
 
 ### 单只深挖(产九节简报)
 ```bash
@@ -144,7 +153,7 @@ python agent_step8_block_trade.py 601006    # 换成任意6位代码
                                                 │
                               Cloudflare Access ─→ 仅白名单邮箱可访问
 ```
-- `data.js` 把母清单 / 候选 / 金融股 / 简报全序列化进 `window.SHEET_DATA`,网页同步引入,彻底绕开 CORS。
+- `data.js` 把母清单 / 候选 / 金融股 / 简报 / 价值镜头 / 信号跟踪全序列化进 `window.SHEET_DATA`,网页同步引入,彻底绕开 CORS。
 - 部署**只上传 `index.html` + `data.js`**(经临时目录暂存),绝不上传 `.env` / `service_account.json` / CSV——否则密钥会变成可公开下载的文件。
 
 ### 4.2 一次性前置
@@ -158,7 +167,7 @@ python agent_step8_block_trade.py 601006    # 换成任意6位代码
 ./build_and_deploy.sh --all              # 刷母清单+候选+金融股 → 写 Sheets + data.js → 部署
 ./build_and_deploy.sh --report 600519    # 单只简报入库 → 更新 data.js → 部署(可跟多个代码)
 ./build_and_deploy.sh --process-requests # 处理用户提交的看票申请(§4.4)→ 部署
-./build_and_deploy.sh --daily            # 日常例程:处理看票申请 → 刷新 data.js → 部署(适合定时跑)
+./build_and_deploy.sh --daily            # 日常例程:看票申请 → 业绩预告 → 前瞻信号对照(§9)→ 刷新 data.js → 部署(适合定时跑)
 ./build_and_deploy.sh --banks            # 刷新金融股评分卡(净资产收益率/ROA等,季度级)→ 重建 data.js → 部署
 ./build_and_deploy.sh --preann           # 刷新业绩预告(前瞻红旗:首亏/预减/扭亏)→ 重建 data.js → 部署
 ./build_and_deploy.sh --all --no-deploy  # 只本地生成,不部署(本地打开 index.html 预览)
@@ -235,6 +244,7 @@ Pages 站点默认公开。用 **Cloudflare Access**(Zero Trust,免费 ≤50 人
 
 **不能做(及原因):**
 - **不能回测、不能算策略收益**。免费数据无 point-in-time(前视偏差)、无退市股(幸存者偏差),任何回测都不可信。这是全程**刻意不做回测**的原因。
+  - **替代方案(已落地):前瞻信号跟踪**(`signal_tracker.py`,§9)。不回看历史、只在发布当下冻结判断、之后只用后到的行情对照——按发布顺序逐条记录,因此**没有挑赢家的幸存者偏差**。它不是回测,是一份越攒越实的诚实成绩单。
 - **不替你决策**。它给信号和假设,不给买卖建议。
 - **不处理极端财务失真到"给可信数"**(如破产重整股),只会诚实标注"算不准"。
 - **大宗交易等东财源可能间歇不可用**,有就看、没有不依赖。
@@ -249,3 +259,39 @@ Pages 站点默认公开。用 **Cloudflare Access**(Zero Trust,免费 ≤50 人
 - 个别票数据为空的容错(如茅台无互动易记录):实战遇到集中收集后统一加
 - `agent_step7_roic.py` 返回里"口径"字段文字仍写旧口径(数值已是年均口径,仅文案待同步)
 - 龙虎榜:已评估,因偏短线、与价值投资取向冲突,**决定不做**
+
+---
+
+## 9. 前瞻信号跟踪(诚实成绩单,非回测)
+
+**动机:** README §7 明确不做回测(免费数据有前视/幸存者偏差)。但"完全没有成绩单"也不行。
+出路是**反过来做**:不事后重算历史,而是在**简报发布的当下**把当时不可复原的判断冻结存档,
+之后只用"发布之后才到来的行情"去对照。因为是按发布顺序逐条记录、不是事后从结果里挑赢家,
+**天然没有幸存者偏差**——这是免费数据下唯一站得住的成绩单。
+
+**冻结什么(`signals.csv`,每条简报一行,按 `code+signal_date` 去重幂等):**
+- `anchor_price` 发布当日收盘(新浪 qfq)· `pb` · `roe_3y` · `roic_3y`
+- `implied_g` 反向DCF市场隐含增速(小数)—— **最可证伪的假设**:日后真实增长来了,可对照市场当时price的预期是否够得着
+- `major_flags` 发布当日重大红旗(日后看是否兑现)
+> 这些里**只有价格能事后复原**;PB/隐含增速/红旗是"当时判断快照",过期不候——所以发布即冻结。
+
+**怎么对照(`signal_outcomes.csv`):** 对每条到期信号,取发布日后 1季/半年/1年(63/126/252 交易日近似)
+的个股收益,并与**沪深300同窗口收益**对照(超额=个股−基准)。未到期→`pending`;取不到价→`unable`(诚实,不编造);算出→`completed`。
+**简报从不给买卖建议**,所以这是"发布以来价格走势(相对基准)"的客观观察,不是"我们的推荐赚没赚"。
+
+**数据源纪律(同 §0):** 价格走**新浪**(`stock_zh_a_daily`/`stock_zh_index_daily`),不走本机不稳的东财;取不到诚实降级。
+
+**命令:**
+```bash
+python signal_tracker.py --show          # 看信号档案 + 成绩单概览
+python signal_tracker.py --evaluate      # 对到期信号做前瞻对照,写 signal_outcomes.csv
+./build_and_deploy.sh --daily            # 日常例程已内置:看票申请→业绩预告→信号对照→刷 data.js→部署
+```
+- **快照是自动的**:`push_to_sheets.py --report`(及看票申请处理)发布简报时自动调 `snapshot_signal`,无需手动。
+- 前端新增「**信号跟踪**」页:概览卡(在档数/已到期/跑赢沪深300占比/平均超额)+ 明细表(隐含增速/PB/个股/沪深300/超额/状态)。
+
+**⚠ 耐久性提示(需你决定):** `*.csv` 已被 `.gitignore` 忽略,`signals.csv` 因此**不进 git 也不上传**。
+但它是**不可复原**的档案(`signal_outcomes.csv` 可重算,`signals.csv` 不行)。当前仅存本机一份。
+若要防丢,建议把它接入既有的 Google Sheets 备份链路(像 `reports` 表那样另起一张 `signals` 表)——
+这一步尚未做,因为是否要把成绩单也同步到 Sheets 是产品取舍,留给你拍板。
+

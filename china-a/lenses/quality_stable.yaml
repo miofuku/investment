@@ -1,0 +1,18 @@
+name: quality_stable
+display_name: 稳健质量(偏活得久)
+description: 先卡"活得久"硬指标(正现金流 + 低负债 + 稳定盈利 + 零红旗),再挑相对便宜。
+# 等价于旧 screen_traditional.py 的 B 表,改为声明式镜头。
+rationale: |
+  在找什么:先确保"活得久"——经营现金流为正、负债不高、常年正盈利、当前无红旗;再在其中选便宜的。
+  最怕什么:为了便宜而牺牲生存力(高杠杆 / 现金流造血差)。这层把生存力放在估值之前。
+  怎么读:与「深度价值」的交集 = 又便宜又稳,是最甜的点;两表都进的票优先深挖。
+
+industry_group: traditional
+filters:
+  - {field: CFQ_w,  op: ge, value: 0.3}    # 正现金流
+  - {field: 负债率, op: le, value: 60}     # 低负债=活得久
+  - {field: ROE_3y, op: ge, value: 6}      # 稳定盈利底线
+exclude_flags: any                          # 零红旗
+rank_by: 综合分
+ascending: true
+top_n: 30

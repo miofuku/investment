@@ -61,17 +61,25 @@ elif [[ "$PREANN" -eq 1 ]]; then
   echo "==> [1/2] 重建 data.js(并入前瞻红旗)"
   "$PYTHON" push_to_sheets.py --datajs
 elif [[ "$DAILY" -eq 1 ]]; then
-  # 日常例程:看票申请 → 刷新业绩预告(前瞻红旗)→ 从 Sheets 刷新 data.js
-  echo "==> [1/3] 日常例程:处理看票申请"
+  # 日常例程:看票申请 → 业绩预告 → 价值镜头 → 前瞻信号对照 → 刷新 data.js
+  echo "==> [1/5] 日常例程:处理看票申请"
   "$PYTHON" push_to_sheets.py --process-requests
-  echo "==> [2/3] 刷新业绩预告(前瞻红旗层)"
+  echo "==> [2/5] 刷新业绩预告(前瞻红旗层)"
   "$PYTHON" earnings_preann.py || echo "  (业绩预告刷新失败,跳过,沿用旧值)"
-  echo "==> [3/3] 刷新 data.js(同步 Sheets 最新简报 + 前瞻红旗)"
+  echo "==> [3/5] 刷新价值镜头候选(读现成母清单,声明式筛选)"
+  "$PYTHON" lens_screen.py || echo "  (价值镜头刷新失败,跳过,沿用旧值)"
+  echo "==> [4/5] 前瞻信号对照(发布以来相对沪深300表现)"
+  "$PYTHON" signal_tracker.py --evaluate || echo "  (信号对照失败,跳过,沿用旧值)"
+  echo "==> [5/5] 刷新 data.js(同步 Sheets 最新简报 + 前瞻红旗 + 镜头 + 信号成绩单)"
   "$PYTHON" push_to_sheets.py --datajs
 else
   # 不带业务参数时,默认刷新全部
   if [[ ${#ARGS[@]} -eq 0 ]]; then ARGS=(--all); fi
-  echo "==> [1/2] 本地生成(写 Google Sheets + data.js):push_to_sheets.py ${ARGS[*]}"
+  if [[ " ${ARGS[*]} " == *" --all "* ]]; then
+    echo "==> [1/2] 刷新价值镜头候选(声明式筛选,读现成母清单)"
+    "$PYTHON" lens_screen.py || echo "  (价值镜头刷新失败,跳过,沿用旧值)"
+  fi
+  echo "==> [2/2] 本地生成(写 Google Sheets + data.js):push_to_sheets.py ${ARGS[*]}"
   "$PYTHON" push_to_sheets.py "${ARGS[@]}"
 fi
 

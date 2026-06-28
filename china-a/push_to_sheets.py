@@ -413,6 +413,8 @@ def generate_data_js(ml, tr, fi, reports=None, out_path="data.js"):
         return obj
 
     rp = reports or []
+    sig = _load_signal_pack()                                         # 前瞻信号跟踪(诚实成绩单)
+    lenses = _load_lenses_pack()                                      # 价值镜头(声明式筛选候选)
     payload = {
         "generated": TODAY,
         "request_endpoint": os.environ.get("REQUEST_ENDPOINT", ""),   # 来自 .env,前端看票申请用
@@ -420,14 +422,41 @@ def generate_data_js(ml, tr, fi, reports=None, out_path="data.js"):
         "traditional": clean(tr),
         "financials":  clean(fi),
         "reports":     clean(rp),
+        "signals":     clean(sig.get("signals", [])),
+        "outcomes":    clean(sig.get("outcomes", [])),
+        "signal_summary": clean(sig.get("summary", {})),
+        "lenses":      clean(lenses),
     }
     js = f"// 自动生成,勿手动编辑。由 push_to_sheets.py 生成于 {TODAY}\n"
     js += f"window.SHEET_DATA = {json.dumps(payload, ensure_ascii=False)};\n"
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(js)
     print(f"  → data.js 已生成({out_path}): "
-          f"母清单{len(ml)}条 / 候选{len(tr)}条 / 简报{len(rp)}条")
+          f"母清单{len(ml)}条 / 候选{len(tr)}条 / 简报{len(rp)}条 / "
+          f"信号{len(payload['signals'])}条 / 镜头{len(payload['lenses'])}个")
     return out_path
+
+
+def _load_signal_pack():
+    """读前瞻信号档案 + 对照结果供 data.js。signal_tracker 缺失/异常时返回空,不阻断。"""
+    try:
+        from signal_tracker import load_for_datajs
+        return load_for_datajs()
+    except Exception as e:
+        print(f"  [信号跟踪] 读取失败(data.js 不含信号):{type(e).__name__}: {e}")
+        return {"signals": [], "outcomes": [], "summary": {}}
+
+
+def _load_lenses_pack(path="factor_lenses.json"):
+    """读价值镜头合并包(lens_screen.py 产)供 data.js。缺失/异常返回空 dict,不阻断。"""
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"  [价值镜头] 读取失败(data.js 不含镜头):{type(e).__name__}: {e}")
+        return {}
 
 
 # ================================================================
@@ -535,9 +564,19 @@ def push_report(code, dryrun=False, rebuild=True):
                  dryrun=dryrun)
     if not dryrun:
         print(f"  ✓ {code} 简报已入库 reports Sheet(date={TODAY})")
+        _snapshot_signal_safe(rec, meta)     # 前瞻信号跟踪:冻结当时判断(失败不阻断发布)
         if rebuild:                          # 批量处理时跳过,末尾统一重建
             _rebuild_data_js()
     return True
+
+
+def _snapshot_signal_safe(rec, meta):
+    """把当前简报快照进信号档案(signal_tracker)。任何异常都不应影响简报发布主流程。"""
+    try:
+        from signal_tracker import snapshot_signal
+        snapshot_signal(rec, meta=meta)
+    except Exception as e:
+        print(f"  [信号跟踪] 快照失败(不影响发布):{type(e).__name__}: {e}")
 
 
 def _read_reports_from_sheets():
@@ -654,6 +693,7 @@ if __name__ == "__main__":
         print("  python push_to_sheets.py --report 600519 601006 600938  批量简报")
         print("  python push_to_sheets.py --datajs           仅重新生成data.js")
         print("  python push_to_sheets.py --process-requests 处理用户提交的看票申请(requests表)")
+        print("  python push_to_sheets.py --eval-signals     前瞻信号对照(沪深300超额)→ 重建data.js")
         print("  任何命令加 --dryrun 只打印不写入")
         sys.exit(0)
 
@@ -674,6 +714,13 @@ if __name__ == "__main__":
 
     elif "--process-requests" in args:
         process_requests(dryrun=dryrun)
+
+    elif "--eval-signals" in args:
+        print("=== 前瞻信号对照 ===")
+        from signal_tracker import evaluate_signals
+        evaluate_signals(dryrun=dryrun)
+        if not dryrun:
+            _rebuild_data_js()              # 把最新对照结果并入 data.js
 
     elif "--datajs" in args:
         print("=== 重新生成 data.js ===")

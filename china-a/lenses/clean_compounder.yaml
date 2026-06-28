@@ -1,0 +1,21 @@
+name: clean_compounder
+display_name: 干净复利机(高回报不靠杠杆)
+description: 高质量复利股,且回报不是靠高负债撑出来的——用去杠杆ROE 对照原始ROE 排除杠杆假象。
+rationale: |
+  在找什么:常年高 ROE、现金流扎实,且 ROE 主要来自经营效率而非财务杠杆。
+  关键护栏(正邦教训):原始 ROE 可被高负债灌水;母清单已算"去杠杆ROE"(ROE_adj≈ROA)。
+  本镜头要求 roe_leverage_ratio = ROE_adj / ROE_3y 不能太低——比值越接近1,说明高回报越是真功夫;
+  比值很低 = 高ROE 多半是借来的杠杆,排除。
+  最怕什么:一次性利得 / 重整虚高 ROE。比值护栏挡杠杆,但一次性失真仍需 agent 的 ROIC 失真护栏兜底。
+  怎么读:全市场。这是"质量优先"的池,估值不一定便宜——能不能买要看 agent 反向DCF 的隐含预期是否够得着。
+
+# 不设 industry_group → 全市场
+filters:
+  - {field: ROE_3y,              op: ge, value: 12}    # 高回报底线
+  - {field: roe_leverage_ratio,  op: ge, value: 0.6}   # 去杠杆后仍保住六成→回报非主要靠杠杆
+  - {field: CFQ_w,               op: ge, value: 0.8}    # 现金流扎实(利润有真金白银兜底)
+  - {field: 负债率,             op: le, value: 65}
+exclude_flags: any                                       # 零红旗
+rank_by: 质量排名                                        # 行业内质量(去杠杆ROE)名次,越小越前
+ascending: true
+top_n: 40

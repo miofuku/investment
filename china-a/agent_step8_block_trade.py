@@ -131,6 +131,7 @@ def _build_meta(code, results):
     basics = results.get("get_stock_basics") or {}
     quality = results.get("get_stock_quality") or {}
     roic = results.get("get_roic_3y") or {}
+    rdcf = results.get("reverse_dcf") or {}
     rfd = results.get("red_flags_deep") or {}
     disc = results.get("scan_disclosures") or {}
     cap = results.get("capital_flow_signals") or {}
@@ -170,6 +171,9 @@ def _build_meta(code, results):
         "pb": _n(basics.get("PB")),
         "roe_3y": _n(quality.get("ROE_3y")),
         "roic_3y": _n(roic.get("ROIC_3y_pct")),
+        # 反向DCF市场隐含增速(小数):信号跟踪据此事后用真实增长证伪市场预期。
+        # null=反向DCF不适用(负FCF等),不强给。
+        "implied_g": _n(rdcf.get("implied_growth")),
         "major_flags": list(dict.fromkeys(flags)),
     }
 

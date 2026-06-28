@@ -1,0 +1,17 @@
+name: deep_value
+display_name: 深度价值(偏便宜)
+description: 传统行业里先按"便宜"排序,只剔除最明显的价值陷阱(深度负现金流 / 重红旗)。
+# 等价于旧 screen_traditional.py 的 A 表,改为声明式镜头。
+rationale: |
+  在找什么:同行业内估值便宜(低PB / 低便宜排名)、但还没烂到现金流深度为负的票。
+  最怕什么:便宜是因为生意在恶化(价值陷阱)。这层只做粗筛剔最差的,真伪留给 agent 深挖。
+  怎么读:这是"线索池"不是"买入名单";低 CFQ_w 但被放行的票尤其要看 agent 的现金流/排雷节。
+
+industry_group: traditional
+filters:
+  - {field: CFQ_w,  op: ge, value: -0.5}   # 现金流质量不能深度为负(剔最差陷阱)
+  - {field: 负债率, op: le, value: 78}
+exclude_flags: severe                       # 剔重红旗(现金流持续弱 / 营收骤降)
+rank_by: 综合分                             # 便宜+质量综合,越小越前
+ascending: true
+top_n: 30
